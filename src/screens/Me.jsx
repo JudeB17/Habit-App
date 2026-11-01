@@ -13,7 +13,7 @@ export default function Me({ onOpenHabit, onNewHabit }) {
     const blob = new Blob([actions.exportData()], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `isle-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `fairway-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -45,7 +45,7 @@ export default function Me({ onOpenHabit, onNewHabit }) {
             <span className="tile sm" style={{ background: CATEGORIES[h.category].tint }}><Icon name={CATEGORIES[h.category].icon} size={16} /></span>
             <button className="grow list-main" onClick={() => onOpenHabit(h)}>
               <strong>{h.name}</strong>
-              <span className="muted small">{schedule(h)} · {CATEGORIES[h.category].resource}</span>
+              <span className="muted small">{schedule(h)}</span>
             </button>
             <button className="icon-btn sm" aria-label={`Move ${h.name} up`} disabled={i === 0} onClick={() => actions.moveHabit(h.id, -1)}><Icon name="up" size={18} /></button>
             <button className="icon-btn sm" aria-label={`Move ${h.name} down`} disabled={i === s.habits.length - 1} onClick={() => actions.moveHabit(h.id, 1)}><Icon name="down" size={18} /></button>
@@ -57,7 +57,7 @@ export default function Me({ onOpenHabit, onNewHabit }) {
       <div className="section-head"><h2>App</h2></div>
       <div className="list-card">
         <label className="list-row toggle-row">
-          <span className="grow"><strong>Sounds</strong><span className="muted small">Check-off and build effects</span></span>
+          <span className="grow"><strong>Sounds</strong><span className="muted small">Check-off, timer and course effects</span></span>
           <input type="checkbox" className="toggle" checked={s.settings.sound} onChange={(e) => actions.setSettings({ sound: e.target.checked })} />
         </label>
         <button className="list-row" onClick={exportData}><span className="grow"><strong>Export backup</strong><span className="muted small">Everything lives on this phone until sync arrives</span></span></button>
@@ -67,7 +67,7 @@ export default function Me({ onOpenHabit, onNewHabit }) {
           <span className="grow"><strong>{confirmReset ? 'Tap again to wipe everything' : 'Reset all data'}</strong></span>
         </button>
       </div>
-      <p className="muted small center-text">Isle 0.1 · local only</p>
+      <p className="muted small center-text">Fairway 0.2 · local only</p>
     </main>
   );
 }

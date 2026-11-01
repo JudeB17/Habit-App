@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import Island from '../components/Island.jsx';
+import { CourseMap } from '../components/Course.jsx';
 import HabitCard from '../components/HabitCard.jsx';
-import Icon, { ResourceToken } from '../components/Icons.jsx';
-import { useStore, isDueOn, isDone, overallStreak, resources, idleDays } from '../lib/store.js';
+import Icon, { MoneyToken } from '../components/Icons.jsx';
+import { useStore, isDueOn, isDone, overallStreak, balance, upkeepAll } from '../lib/store.js';
 import { dayKey, headerDate, greeting } from '../lib/dates.js';
-import { RESOURCE_KEYS } from '../lib/game.js';
+import { money } from '../lib/game.js';
 
-export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHabit, goIsland }) {
+export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHabit, goCourse }) {
   const s = useStore();
   const day = dayKey();
   const [showRest, setShowRest] = useState(false);
@@ -14,7 +14,10 @@ export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHa
   const rest = s.habits.filter((h) => !h.archived && !isDueOn(s, h, day));
   const doneCount = due.filter((h) => isDone(s, h.id, day)).length;
   const streak = overallStreak(s, day);
-  const res = resources(s);
+  const bal = balance(s);
+  const avg = Math.round(s.course.holes.reduce((a, h) => a + h.cond, 0) / 18);
+  const dmg = s.course.holes.reduce((a, h) => a + h.damage.length, 0);
+  const upkeep = upkeepAll(s).money;
   const allDone = due.length > 0 && doneCount === due.length;
 
   const cardProps = { s, day, onOpen: onOpenHabit, onCount, onBucket, onTimer };
@@ -31,14 +34,14 @@ export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHa
         </div>
       </header>
 
-      <button className="island-card" onClick={goIsland} aria-label="Open your island">
-        <Island built={s.buildings} idle={idleDays(s, day)} />
+      <button className="island-card" onClick={goCourse} aria-label="Open your course">
+        <CourseMap course={s.course} items={s.items} barn={s.barn} />
         <div className="res-row">
-          {RESOURCE_KEYS.map((k) => (
-            <span key={k} className="res-chip" data-res-target={k} title={k}>
-              <ResourceToken resource={k} size={16} /> {res[k]}
-            </span>
-          ))}
+          <span className="res-chip" data-res-target="money"><MoneyToken size={16} /> {money(bal)}</span>
+          <span className={`res-chip ${avg < 45 ? 'warn' : ''}`}>{avg}% kept</span>
+          {dmg > 0 && <span className="res-chip warn">{dmg} to repair</span>}
+          {s.chests.length > 0 && <span className="res-chip chest">{s.chests.length} chest{s.chests.length === 1 ? '' : 's'} to open</span>}
+          {upkeep > 0 && avg < 75 && <span className="res-chip">Upkeep {money(upkeep)}</span>}
         </div>
       </button>
 
@@ -47,7 +50,7 @@ export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHa
         <span className={`count ${allDone ? 'all' : ''}`}>{doneCount} / {due.length}</span>
       </div>
 
-      {allDone && <p className="all-done">Everything's done. The island's doing its thing.</p>}
+      {allDone && <p className="all-done">Everything's done. Go spend it on the course.</p>}
 
       <div className="habit-list">
         {due.map((h) => (

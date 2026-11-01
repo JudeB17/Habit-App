@@ -2,9 +2,8 @@
 // Kept outside React so a check-off never waits on a re-render.
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { ResourceToken } from './Icons.jsx';
+import { MoneyToken } from './Icons.jsx';
 import { sfx } from '../lib/sound.js';
-import { CATEGORIES } from '../lib/game.js';
 
 let layer;
 function getLayer() {
@@ -16,11 +15,11 @@ function getLayer() {
   return layer;
 }
 
-function tokenEl(resource) {
+function tokenEl() {
   const el = document.createElement('div');
   el.className = 'fx-token';
   const root = createRoot(el);
-  flushSync(() => root.render(<ResourceToken resource={resource} size={26} />));
+  flushSync(() => root.render(<MoneyToken size={26} />));
   return { el, root };
 }
 
@@ -29,8 +28,8 @@ function center(rect) {
 }
 
 export const fx = {
-  /** Float "+N resource" from the source and fly tokens to the matching resource chip. */
-  reward(fromEl, resource, amount) {
+  /** Float "+$N" from the source and fly coins to the wallet chip. */
+  reward(fromEl, amount) {
     if (!fromEl || amount <= 0) return;
     const L = getLayer();
     const from = center(fromEl.getBoundingClientRect());
@@ -38,7 +37,7 @@ export const fx = {
 
     const label = document.createElement('div');
     label.className = 'fx-plus';
-    label.textContent = `+${amount} ${resource}`;
+    label.textContent = `+$${amount}`;
     label.style.left = `${from.x}px`;
     label.style.top = `${from.y}px`;
     L.appendChild(label);
@@ -49,13 +48,13 @@ export const fx = {
       { duration: 900, easing: 'cubic-bezier(.2,.8,.2,1)' },
     ).onfinish = () => label.remove();
 
-    const target = document.querySelector(`[data-res-target="${resource}"]`) || document.querySelector('[data-res-target="any"]');
+    const target = [...document.querySelectorAll('[data-res-target="money"]')].find((el) => el.offsetParent !== null);
     if (!target || reduce) return;
     const to = center(target.getBoundingClientRect());
     const n = Math.min(4, Math.max(2, Math.round(amount / 6)));
 
     for (let i = 0; i < n; i++) {
-      const { el, root } = tokenEl(resource);
+      const { el, root } = tokenEl();
       el.style.left = `${from.x}px`;
       el.style.top = `${from.y}px`;
       L.appendChild(el);
@@ -90,6 +89,9 @@ export const fx = {
     const el = document.createElement('div');
     el.className = 'fx-toast';
     el.textContent = text;
+    // Stack below any toast still on screen.
+    const live = L.querySelectorAll('.fx-toast').length;
+    el.style.marginTop = `${live * 52}px`;
     L.appendChild(el);
     el.animate(
       [{ transform: 'translate(-50%, -20px)', opacity: 0 },
@@ -108,7 +110,7 @@ export function payout(habit, gained) {
     sfx.check();
     const card = btn?.closest('.habit');
     if (card) { card.classList.remove('paying'); void card.offsetWidth; card.classList.add('paying'); }
-    fx.reward(btn, CATEGORIES[habit.category].resource, gained);
+    fx.reward(btn, gained);
   } else if (gained < 0) {
     sfx.uncheck();
   }

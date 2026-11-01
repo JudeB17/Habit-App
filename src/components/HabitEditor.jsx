@@ -52,11 +52,11 @@ export default function HabitEditor({ habit, onClose }) {
             ))}
           </div>
 
-          <span className="label">Category <em>sets the resource it earns</em></span>
+          <span className="label">Category</span>
           <div className="chips">
             {Object.entries(CATEGORIES).map(([id, c]) => (
               <button key={id} className={`chip ${h.category === id ? 'on' : ''}`} style={{ '--tint': c.tint }} onClick={() => set({ category: id })}>
-                <Icon name={c.icon} size={16} /> {c.label} <span className="chip-sub">{c.resource}</span>
+                <Icon name={c.icon} size={16} /> {c.label}
               </button>
             ))}
           </div>

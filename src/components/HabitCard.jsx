@@ -58,7 +58,7 @@ export default function HabitCard({ s, habit, day, timerActive, onOpen, onCount,
           <span className="habit-sub">
             {done ? (
               <>
-                <b>+{log.yield} {cat.resource}</b>
+                <b>+${log.yield}</b>
                 {log.trust !== 'honour' && <span className={`trust ${log.trust}`}>{TRUST[log.trust].label}</span>}
                 {sub && <span className="dim">{sub}</span>}
               </>

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import Island from './Island.jsx';
+import { CourseMap } from './Course.jsx';
 import Icon from './Icons.jsx';
 import { payout } from './fx.jsx';
-import { actions, timerElapsedMs, useStore, idleDays } from '../lib/store.js';
+import { actions, timerElapsedMs, useStore } from '../lib/store.js';
 import { formatDuration } from '../lib/dates.js';
 import { MIN_VERIFIED_SESSION_S, CATEGORIES } from '../lib/game.js';
 import { sfx } from '../lib/sound.js';
@@ -53,7 +53,7 @@ export default function TimerScreen({ onClose }) {
   return (
     <div className="timer-screen" role="dialog" aria-modal="true" aria-label={`${habit.name} timer`}>
       <div className="timer-island">
-        <Island built={s.buildings} idle={idleDays(s)} label="Your island" />
+        <CourseMap course={s.course} items={s.items} barn={s.barn} label="Your course" />
       </div>
 
       <div className="timer-top">

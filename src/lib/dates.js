@@ -18,6 +18,11 @@ export function addDays(key, n) {
   return dayKey(d);
 }
 
+/** Whole calendar days from a to b (b later is positive). */
+export function daysBetween(a, b) {
+  return Math.round((parseKey(b) - parseKey(a)) / 86_400_000);
+}
+
 /** 0 = Sunday ... 6 = Saturday */
 export function weekday(key) {
   return parseKey(key).getDay();
