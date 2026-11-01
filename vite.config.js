@@ -11,9 +11,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Isle',
-        short_name: 'Isle',
-        description: 'Habits that build an island with your friends.',
+        name: 'Fairway',
+        short_name: 'Fairway',
+        description: 'Habits that keep an 18 hole golf course alive.',
         start_url: './',
         scope: './',
         display: 'standalone',

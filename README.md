@@ -1,6 +1,6 @@
-# Isle
+# Fairway
 
-Habit tracker where finishing habits earns materials that build a cut-paper island. Phase 1 of the Habit App Spec: solo core, running entirely on the phone.
+Habit tracker where habits and Pomodoro blocks earn money that keeps a cut-paper 18 hole golf course alive. Phase 1 of the Habit App Spec: solo core, running entirely on the phone.
 
 ## Run it
 
@@ -42,44 +42,46 @@ jobs:
 
 `base: './'` in `vite.config.js` means it works from any sub-path, no config change needed.
 
-## What's in phase 1
+## What's in 0.2
 
 | Area | Status |
 | --- | --- |
-| Habits: check, count, duration, limit | Done. Schedules: daily, chosen weekdays, N per week |
-| Today screen, one-tap logging | Done. Check-off squashes the card, plays a sound, flies resource tokens into the island |
-| Streaks | Per habit (days, or weeks for weekly quotas) and overall |
-| Rewards | 10 base x trust (verified 1.5, honour 1.0) x streak bonus (+2%/day, cap +50%) |
-| Study timer | Full screen, survives closing the app, sessions of 10+ min are verified |
-| Screen time | Honour bucket tap, passes if the bucket's ceiling is within the limit |
-| Island | 8 illustrated buildings bought with resources, weeds after 2 idle days |
-| Feed | Preview of your own daily card with privacy settings applied |
-| Plan | Next 7 days of scheduled habits |
-| Backup | Export and import JSON from Me |
+| Habits: check, count, duration, limit | Schedules: daily, chosen weekdays, N per week |
+| Money | Habits pay $10 x trust x streak bonus. Pomodoro blocks pay $0.40 a focus minute, +20% for finishing a full stack |
+| Pomodoro | Presets 25/5 and 50/10 or custom focus, break, long break, long-break interval and block count. Add blocks mid-run |
+| Leave rule | Off screen for more than 10 s during focus fails that block only; the run stops, earlier blocks still pay. Breaks are free time. Failed blocks damage the hole being played |
+| Course | 18 holes, par 72. Each hole has condition plus tee, fairway, bunkers and green upgrades (3 levels each). Clubhouse has 5 levels |
+| Decay | Every hole loses 6% a day down to a 30% floor. Damage can push lower |
+| Upkeep | Money plus materials. Per condition point restored: $1 per 4, fuel and water 1 per 40, fertiliser and sand 1 per 80. Costs round up once per job, so maintain all is cheaper than hole by hole. Repairs: $25 plus divot 2 seed + 1 sand, water 2 fuel, brown patch 2 seed + 2 water |
+| Barn | Stores fuel, water, fertiliser, sand, seed. Cap 30 / 60 / 120 / 250 by level ($150, $400, $900). Overflow sells for $1 a unit |
+| Chests | Crate 6 to 9 units, chest 18 to 24, big chest 40 to 50. Rolls lean towards what you're low on. Item chance 10% / 35% / 100% |
+| Goals | Small (due 1+ days, crate), medium (3+ days, chest), big (7+ days, big chest). Must be set on an earlier day to pay; late goals pay one size down |
+| Items | 12 collectibles placed on the course, from chests only. Streak milestones (7/21/50/100 days, 4/12/26 weeks) give a chest; 4+ block stacks have a 30% chance of a crate. Duplicates sell for money |
+| Stats | Focus time by day or week, Pomodoro finished vs failed and best stack, per habit 30 day hit rate and streaks |
+| Plan | Goals with deadlines, plus the next 7 days |
+| Open timer | Still there for sessions without the leave rule |
+| Backup | Export and import JSON from Me. Old Isle data migrates: logs and habits carry over, island spending becomes money |
 
-## Not built yet
-
-- Friends, real feed, reactions, nudges, Web Push (phase 2). `supabase/schema.sql` is ready and tested against Postgres 16.
-- Photo proof (1.2x trust). The multiplier exists; no upload UI.
-- 9 pm screen time prompt. Needs Web Push, so phase 2.
-- Building placement on a grid. Buildings have fixed spots for now.
-- Shared centre, weekly event, goals and pace lines (phases 3 to 5).
+Feed is hidden from the tab bar until friends exist; the screen is still in `src/screens/Feed.jsx`.
 
 ## Layout
 
 ```
 src/
   lib/store.js       local-first state, mirrors the Supabase tables
-  lib/game.js        rules: categories, yields, buckets, buildings
+  lib/game.js        rules: money, Pomodoro, course economy, drops
+  lib/holes.js       geometry for the 18 holes, shared by the map and hole view
   lib/dates.js       local day keys (never UTC)
   lib/sound.js       synthesised sounds, no audio files
-  components/        Island (SVG pieces), HabitCard, sheets, timer, fx overlay
-  screens/           Today, Island, Feed, Plan, Me
-supabase/schema.sql  tables, RLS, server-side scoring trigger, build() function
+  components/        Course (map, hole view, clubhouse, drops), PomodoroScreen, HabitCard, sheets, fx
+  screens/           Today, Course, Stats, Plan, Me
+supabase/schema.sql  island-era schema; needs updating for money, course and runs before sync
 ```
 
 ## Known limits
 
 - Data lives in localStorage on one device. Clearing Safari website data wipes it; export a backup.
 - iOS suspends background JS, so the timer has no lock screen countdown and the end chime only plays with the app open. The elapsed time is still correct when you come back.
-- Resources update the moment you log. If you undo a habit after spending, a resource can go negative.
+- Money updates the moment you log. Undo a habit after spending and the balance can go negative.
+- The leave check uses a heartbeat in localStorage. It's honest-use enforcement, not anti-cheat: anyone can edit storage.
+- Screen auto-lock counts as leaving. The app asks for a wake lock, but iOS home screen apps only honour it on recent iOS versions, so set Auto-Lock to Never or 5 min while studying if blocks fail on their own.
