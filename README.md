@@ -1,6 +1,6 @@
 # Fairway
 
-Habit tracker where habits and Pomodoro blocks earn money that keeps a cut-paper 18 hole golf course alive. Phase 1 of the Habit App Spec: solo core, running entirely on the phone.
+Habit tracker where habits and Pomodoro blocks earn money that keeps a cut-paper 18 hole golf course alive. Stage 2 of the Habit App Spec: the solo core plus friends, a feed, and visiting friends' courses.
 
 ## Run it
 
@@ -42,7 +42,33 @@ jobs:
 
 `base: './'` in `vite.config.js` means it works from any sub-path, no config change needed.
 
-## What's in 0.2
+## Friends setup (one time, free)
+
+1. Make a project at supabase.com (free tier). Region: Sydney.
+2. SQL Editor > New query > paste all of `supabase/schema.sql` > Run.
+3. Authentication > Sign In / Providers > Email: turn **Confirm email** off. Sign in is email and password; with confirmation on, the free email sender's hourly limit gets hit as soon as a few friends sign up, and confirmation links open in Safari instead of the home screen app.
+4. Project Settings > API: copy the **Project URL** and the **anon public** key.
+5. GitHub repo > Settings > Secrets and variables > Actions > Variables tab: add `SUPABASE_URL` and `SUPABASE_ANON_KEY` with those values. Re-run the deploy workflow.
+6. For local dev, put the same two values in `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+
+The anon key is meant to be public. Row level security in the schema is what stops anyone reading your data: you only see people who share a group with you, and nobody can join a group without its code.
+
+Free tier note: Supabase pauses a project after 7 days with no traffic. Daily use keeps it awake; if it pauses, hit Restore in the dashboard.
+
+## What's in 0.3: friends
+
+| Area | Status |
+| --- | --- |
+| Accounts | Email and password. Optional: the app still works fully offline and signed out |
+| Groups | Create a group, share the 8 character code, friends join with it. You can be in several groups; friends are everyone who shares one with you |
+| What friends see | A card per person: today's habits (visibility rules apply: private habits are left out, summary habits show as "private"), focus time, blocks, streak, last 7 days, and the whole course |
+| Friend's course | Tap a friend: their map, rating, condition, damage, clubhouse, barn, collection. Tap a hole to see it close up. Decay keeps running while they're away, so a friend who stops opening the app browns on your screen too |
+| Feed | One card per person per day that updates as habits are ticked off, plus moments: finished or failed Pomodoro stacks, goals (names can be hidden in Me), new items, streak milestones, clubhouse and barn builds |
+| Reactions and comments | 5 reactions per post, comments with delete for your own and on your own posts |
+| Sync | Local-first. Changes publish 4 s after they happen, when the app is hidden, and when it comes back online. Feed refreshes on open and every 90 s while visible |
+| Backup | Full state saved privately every 10 min while signed in. Sign in on a new phone and it offers to restore. A fresh install never overwrites the cloud backup and publishes nothing until it's restored |
+
+## What's in 0.2: solo core
 
 | Area | Status |
 | --- | --- |
@@ -62,25 +88,29 @@ jobs:
 | Open timer | Still there for sessions without the leave rule |
 | Backup | Export and import JSON from Me. Old Isle data migrates: logs and habits carry over, island spending becomes money |
 
-Feed is hidden from the tab bar until friends exist; the screen is still in `src/screens/Feed.jsx`.
 
 ## Layout
 
 ```
 src/
   lib/store.js       local-first state, mirrors the Supabase tables
+  lib/social.js      Supabase: auth, groups, publish, feed, reactions, backup
+  lib/card.js        what friends see, built from local state
   lib/game.js        rules: money, Pomodoro, course economy, drops
   lib/holes.js       geometry for the 18 holes, shared by the map and hole view
   lib/dates.js       local day keys (never UTC)
   lib/sound.js       synthesised sounds, no audio files
   components/        Course (map, hole view, clubhouse, drops), PomodoroScreen, HabitCard, sheets, fx
-  screens/           Today, Course, Stats, Plan, Me
-supabase/schema.sql  island-era schema; needs updating for money, course and runs before sync
+  screens/           Today, Course, Feed, FriendView, Stats, Plan, Me
+supabase/schema.sql  profiles, groups, cards, events, reactions, comments, backups + RLS
 ```
 
 ## Known limits
 
-- Data lives in localStorage on one device. Clearing Safari website data wipes it; export a backup.
+- Data lives in localStorage on one device. Signed in, there's a cloud backup; signed out, clearing Safari website data wipes it, so export a backup.
+- One phone per account. The backup is last-write-wins for the whole state, so using two phones on the same account will overwrite one with the other.
+- Everything friends see is published by the phone, so it's honour system like the rest. Someone who edits their local storage can fake a perfect course.
+- No push notifications yet. Friends' activity shows when you open the app.
 - iOS suspends background JS, so the timer has no lock screen countdown and the end chime only plays with the app open. The elapsed time is still correct when you come back.
 - Money updates the moment you log. Undo a habit after spending and the balance can go negative.
 - The leave check uses a heartbeat in localStorage. It's honest-use enforcement, not anti-cheat: anyone can edit storage.
