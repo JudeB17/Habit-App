@@ -4,6 +4,9 @@ import CourseScreen from './screens/CourseScreen.jsx';
 import Stats from './screens/Stats.jsx';
 import Plan from './screens/Plan.jsx';
 import Me from './screens/Me.jsx';
+import Feed from './screens/Feed.jsx';
+import FriendView from './screens/FriendView.jsx';
+import { startSocial, useSocial } from './lib/social.js';
 import HabitEditor from './components/HabitEditor.jsx';
 import TimerScreen from './components/TimerScreen.jsx';
 import PomodoroScreen from './components/PomodoroScreen.jsx';
@@ -19,6 +22,7 @@ import { sfx } from './lib/sound.js';
 const TABS = [
   ['today', 'Today'],
   ['course', 'Course'],
+  ['feed', 'Feed'],
   ['stats', 'Stats'],
   ['plan', 'Plan'],
   ['me', 'Me'],
@@ -70,7 +74,9 @@ export default function App() {
   const [sheet, setSheet] = useState(null); // { kind, habit }
   const [timerOpen, setTimerOpen] = useState(!!s.timer);
   const [opened, setOpened] = useState(null);
+  const [friend, setFriend] = useState(null);
   usePresence();
+  useEffect(() => { startSocial(); }, []);
 
   useEffect(() => {
     const onChest = (e) => { if (!e.detail.reason.startsWith('Goal')) fx.toast(`${CHESTS[e.detail.kind].label} earned: ${e.detail.reason}`); };
@@ -93,7 +99,10 @@ export default function App() {
     setSheet({ kind: 'timer', habit });
   }
 
-  useEffect(() => { window.scrollTo(0, 0); }, [tab]);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (tab === 'feed') try { localStorage.setItem('fairway.feedSeen', String(Date.now())); } catch { /* ignore */ }
+  }, [tab]);
 
   if (!s.profile.onboarded) return <Onboarding />;
 
@@ -114,9 +123,11 @@ export default function App() {
         />
       )}
       {tab === 'course' && <CourseScreen onOpenChest={(id) => setOpened({ id, result: null })} />}
+      {tab === 'feed' && <Feed onFriend={setFriend} />}
       {tab === 'stats' && <Stats />}
       {tab === 'plan' && <Plan />}
-      {tab === 'me' && <Me {...screenProps} />}
+      {tab === 'me' && <Me {...screenProps} goFeed={() => setTab('feed')} />}
+      {friend && <FriendView id={friend} onClose={() => setFriend(null)} />}
 
       {s.timer && !timerOpen && <TimerPill onOpen={() => setTimerOpen(true)} />}
 
@@ -127,7 +138,7 @@ export default function App() {
             className={tab === id ? 'on' : ''}
             aria-current={tab === id ? 'page' : undefined}
             onClick={() => { if (tab !== id) sfx.tap(); setTab(id); }}
-          >{label}</button>
+          >{label}{id === 'feed' && <FeedDot />}</button>
         ))}
       </nav>
 
@@ -207,6 +218,14 @@ function ChestOpen({ chestId, onClose }) {
       </div>
     </div>
   );
+}
+
+/** Dot on the Feed tab when friends have posted since you last looked. */
+function FeedDot() {
+  const so = useSocial();
+  const seen = Number(localStorage.getItem('fairway.feedSeen') || 0);
+  const fresh = so.user && so.feed.some((e) => e.user_id !== so.user.id && Date.parse(e.updated_at) > seen);
+  return fresh ? <span className="tab-dot" aria-label="new" /> : null;
 }
 
 function TimerPill({ onOpen }) {

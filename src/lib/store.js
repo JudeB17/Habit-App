@@ -1,6 +1,5 @@
-// Local-first store. The shape mirrors the Supabase tables in supabase/schema.sql
-// (habits, habit_logs, study_sessions) so a sync layer can be added in phase 2
-// without touching the screens.
+// Local-first store. The phone is the source of truth. lib/social.js publishes a public card,
+// feed events from `outbox`, and a private backup to Supabase when signed in.
 
 import { useSyncExternalStore } from 'react';
 import { dayKey, addDays, weekday, weekStart, daysBetween } from './dates.js';
@@ -38,6 +37,7 @@ function initialState() {
   const p = POMO_PRESETS[0];
   return {
     v: 2,
+    installId: uid(), // tells this phone's backup apart from another phone's
     profile: { name: '', onboarded: false },
     settings: { sound: true, pomo: { focus: p.focus, brk: p.brk, long: p.long, every: p.every, blocks: p.blocks } },
     habits: seedHabits(),
@@ -54,6 +54,7 @@ function initialState() {
     materials: { ...START_MATERIALS },
     barn: 0,
     chests: [],      // unopened: { id, kind, reason, at }
+    outbox: [],      // feed events waiting to publish: { key, kind, payload, at }
   };
 }
 
@@ -91,6 +92,10 @@ function commit(next) {
 }
 
 export const getState = () => state;
+/** Plain subscription for non-React code (the sync layer). */
+export function subscribe(l) { listeners.add(l); return () => listeners.delete(l); }
+/** True for a phone with nothing logged yet, e.g. a fresh install before restoring a backup. */
+export const isFresh = (s = state) => !Object.values(s.logs).some((d) => Object.keys(d).length) && !s.sessions.length && !s.goals.length;
 export function useStore(selector = (s) => s) {
   return useSyncExternalStore(
     (l) => { listeners.add(l); return () => listeners.delete(l); },
@@ -230,6 +235,7 @@ function checkMilestone(habit, day) {
   commit({ ...state, milestones: { ...state.milestones, [habit.id]: [...paid, hit] } });
   const unit = habit.schedule.kind === 'weekly' ? 'week' : 'day';
   giveChest('chest', `${hit} ${unit} ${habit.name} streak`);
+  post('milestone', { habit: habit.visibility === 'friends' ? habit.name : null, n: hit, unit });
 }
 
 /** Adds a random drop to the collection. Duplicates convert to money. */
@@ -242,6 +248,22 @@ function giveItem(boost = false) {
 }
 
 /** Chests wait unopened in the barn until you tap them. */
+/** Queue a feed event. social.js flushes it when signed in; stale ones are dropped there. */
+function post(kind, payload) {
+  const ev = { key: `ev:${uid()}`, kind, payload, at: Date.now() };
+  commit({ ...state, outbox: [...(state.outbox ?? []), ev].slice(-60) });
+}
+
+/** Habit name as friends may see it. Private and summary habits stay anonymous. */
+const publicName = (habitId) => {
+  const h = state.habits.find((x) => x.id === habitId);
+  return h?.visibility === 'friends' ? h.name : null;
+};
+
+export function clearOutbox(keys) {
+  commit({ ...state, outbox: (state.outbox ?? []).filter((e) => !keys.includes(e.key)) });
+}
+
 function giveChest(kind, reason) {
   const c = { id: uid(), kind, reason, at: Date.now() };
   commit({ ...state, chests: [...state.chests, c] });
@@ -339,6 +361,7 @@ function failBlock(t, reason) {
   const course = state.course;
   commit({ ...state, course: { ...course, nextHole: (course.nextHole + 1) % HOLE_COUNT } });
   emit('fail', { ...dmg, reason });
+  post('stack', { habit: publicName(t.habitId), blocks: t.completed, planned: t.blocks, focus: t.cfg.focus, failed: true, hole: dmg.hole + 1, why: reason });
   return { ...t, phase: 'failed', failReason: reason, damage: dmg, phaseStart: Date.now() };
 }
 
@@ -347,6 +370,7 @@ function finishRun(t) {
   if (t.blocks >= 2) bonus = Math.round(t.pay * STACK_BONUS);
   if (bonus) commit({ ...state, earned: state.earned + bonus });
   const out = { ...t, phase: 'done', bonus, phaseStart: Date.now() };
+  post('stack', { habit: publicName(t.habitId), blocks: t.completed, planned: t.blocks, focus: t.cfg.focus, failed: false });
   if (t.blocks >= 4 && Math.random() < STACK_DROP_CHANCE) {
     commit({ ...state, timer: out });
     giveChest('crate', `${t.blocks} block stack`);
@@ -522,6 +546,7 @@ export const actions = {
     if (['break', 'ready'].includes(t.phase)) {
       const runs = state.runs.map((r) => (r.id === t.runId ? { ...r, planned: t.completed } : r));
       commit({ ...state, runs, timer: { ...t, phase: 'done', bonus: 0, endedEarly: true, phaseStart: Date.now() } });
+      if (t.completed > 0) post('stack', { habit: publicName(t.habitId), blocks: t.completed, planned: t.blocks, focus: t.cfg.focus, failed: false, early: true });
       return;
     }
     commit({ ...state, timer: null });
@@ -563,6 +588,7 @@ export const actions = {
     const next = state.barn + 1;
     if (next >= BARN.length || !spend(BARN[next].cost)) return false;
     commit({ ...state, barn: next });
+    post('build', { what: 'barn', name: BARN[next].name });
     return true;
   },
   /** Open a chest: materials into the barn, maybe an item. Returns what came out. */
@@ -573,6 +599,7 @@ export const actions = {
     const roll = rollChest(c.kind, state.materials, barnCap(state));
     const { added, sold } = stock(roll.mats);
     const item = roll.item ? giveItem(CHESTS[c.kind].boost) : null;
+    if (item && !item.dupe) post('item', { id: item.item.id, name: item.item.name, rarity: item.item.rarity });
     return { chest: c, mats: roll.mats, added, sold, item };
   },
   upgrade(i, part) {
@@ -586,6 +613,7 @@ export const actions = {
     const next = state.course.clubhouse + 1;
     if (next >= CLUBHOUSE.length || !spend(CLUBHOUSE[next].cost)) return false;
     commit({ ...state, course: { ...state.course, clubhouse: next } });
+    post('build', { what: 'clubhouse', name: CLUBHOUSE[next].name });
     return true;
   },
 
@@ -607,6 +635,7 @@ export const actions = {
     const late = today > g.due;
     const chest = goalChest(g.size ?? 'medium', late);
     giveChest(chest, `Goal: ${g.title}`);
+    post('goal', { title: state.settings.shareGoals === false ? null : g.title, size: g.size ?? 'medium', late });
     return { kind: 'chest', chest, late };
   },
   deleteGoal(id) { commit({ ...state, goals: state.goals.filter((x) => x.id !== id) }); },
@@ -640,7 +669,7 @@ export const actions = {
   importData(json) {
     const parsed = JSON.parse(json);
     if (!Array.isArray(parsed.habits) || typeof parsed.logs !== 'object') throw new Error('Not a Fairway backup');
-    commit(migrate(parsed));
+    commit({ ...migrate(parsed), outbox: [] });
   },
   reset() { commit(initialState()); },
 };

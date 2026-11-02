@@ -1,25 +1,35 @@
--- Isle: Supabase schema for phase 2 (sync + friends).
--- Not used by the app yet. Phase 1 runs entirely on-device; this file is the target the
--- local store was shaped to match. Run it in the Supabase SQL editor on a fresh project.
+-- Fairway: Supabase schema for stage 2 (friends, feed, cloud backup).
+-- Run the whole file once in the Supabase SQL editor on a fresh project.
+--
+-- Model: the phone stays the source of truth (local-first). It publishes:
+--   cards    one public snapshot per user: today's habits, streak, focus, the course itself
+--   events   feed items: the daily card plus notable moments (stacks, goals, items, builds)
+--   backups  the full local state, readable only by its owner, for restoring on a new phone
+-- Friends are anyone who shares a group with you. Everything is gated by row level security.
 
 create extension if not exists pgcrypto;
 
--- ---------- core tables ----------
+-- ---------- tables ----------
+
+-- 8 chars, no 0/O/1/I so codes read clearly over a text message
+create or replace function public.invite_code() returns text language sql volatile as $$
+  select string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '')
+  from generate_series(1, 8);
+$$;
 
 create table public.profiles (
-  id            uuid primary key references auth.users on delete cascade,
-  display_name  text not null default '',
-  avatar        text,
-  timezone      text not null default 'Australia/Sydney',
-  created_at    timestamptz not null default now()
+  id          uuid primary key references auth.users on delete cascade,
+  name        text not null default '' check (char_length(name) <= 40),
+  created_at  timestamptz not null default now()
 );
 
 create table public.groups (
-  id                 uuid primary key default gen_random_uuid(),
-  name               text not null,
-  invite_code        text not null unique default upper(substr(md5(random()::text), 1, 6)),
-  weekly_target_pct  int  not null default 80 check (weekly_target_pct between 1 and 100),
-  created_at         timestamptz not null default now()
+  id           uuid primary key default gen_random_uuid(),
+  name         text not null check (char_length(name) between 1 and 40),
+  -- 8 chars, no 0/O/1/I so codes read clearly over a text message
+  invite_code  text not null unique default public.invite_code(),
+  created_by   uuid references public.profiles on delete set null,
+  created_at   timestamptz not null default now()
 );
 
 create table public.group_members (
@@ -28,283 +38,152 @@ create table public.group_members (
   joined_at  timestamptz not null default now(),
   primary key (group_id, user_id)
 );
+create index on public.group_members (user_id);
 
-create type habit_type as enum ('check', 'count', 'duration', 'limit');
-create type habit_category as enum ('study', 'reading', 'fitness', 'screen', 'other');
-create type visibility as enum ('friends', 'summary', 'private');
-create type trust_level as enum ('verified', 'proof', 'honour');
-create type log_source as enum ('manual', 'timer', 'screentime');
+create table public.cards (
+  user_id     uuid primary key references public.profiles on delete cascade default auth.uid(),
+  card        jsonb not null,
+  updated_at  timestamptz not null default now(),
+  check (pg_column_size(card) < 200000)
+);
 
-create table public.habits (
+create table public.backups (
+  user_id     uuid primary key references public.profiles on delete cascade default auth.uid(),
+  data        jsonb not null,
+  updated_at  timestamptz not null default now(),
+  check (pg_column_size(data) < 5000000)
+);
+
+create table public.events (
   id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references public.profiles on delete cascade,
-  name        text not null,
-  type        habit_type not null,
-  category    habit_category not null,
-  target      numeric not null default 1,
-  unit        text not null default '',
-  schedule    jsonb not null default '{"kind":"daily"}',  -- {kind:'daily'} | {kind:'days',days:[0..6]} | {kind:'weekly',times:n}
-  visibility  visibility not null default 'friends',
-  goal_id     uuid,
-  sort        int not null default 0,
-  archived    boolean not null default false,
-  created_at  date not null default current_date
-);
-
-create table public.habit_logs (
-  id         uuid primary key default gen_random_uuid(),
-  habit_id   uuid not null references public.habits on delete cascade,
-  user_id    uuid not null references public.profiles on delete cascade,
-  log_date   date not null,
-  value      numeric not null default 0,
-  bucket     text,                       -- screen time bucket id for limit habits
-  trust      trust_level not null default 'honour',
-  proof_url  text,
-  source     log_source not null default 'manual',
-  done       boolean not null default false,  -- set by trigger, never by the client
-  yield      int not null default 0,          -- set by trigger, never by the client
-  unique (habit_id, log_date)
-);
-create index on public.habit_logs (user_id, log_date);
-
-create table public.study_sessions (
-  id          uuid primary key default gen_random_uuid(),
-  user_id     uuid not null references public.profiles on delete cascade,
-  habit_id    uuid references public.habits on delete set null,
-  started_at  timestamptz not null,
-  ended_at    timestamptz not null,
-  duration_s  int generated always as (extract(epoch from ended_at - started_at)::int) stored
-);
-
-create table public.goals (
-  id            uuid primary key default gen_random_uuid(),
-  user_id       uuid not null references public.profiles on delete cascade,
-  title         text not null,
-  target_value  numeric not null,
-  unit          text not null default '',
-  start_date    date not null default current_date,
-  deadline      date not null,
-  status        text not null default 'active' check (status in ('active', 'hit', 'missed'))
-);
-alter table public.habits add constraint habits_goal_fk foreign key (goal_id) references public.goals on delete set null;
-
-create table public.goal_milestones (
-  id        uuid primary key default gen_random_uuid(),
-  goal_id   uuid not null references public.goals on delete cascade,
-  title     text not null,
-  due_date  date not null,
-  done      boolean not null default false
-);
-
-create table public.buildings (
-  id    text primary key,
-  name  text not null,
-  cost  jsonb not null default '{}'   -- {"timber":40,"paper":10}
-);
-insert into public.buildings (id, name, cost) values
-  ('house', 'Cottage', '{}'),
-  ('trees', 'Pine grove', '{"seeds":15}'),
-  ('garden', 'Veggie garden', '{"seeds":25,"coins":5}'),
-  ('library', 'Library', '{"timber":40,"paper":10}'),
-  ('dock', 'Jetty', '{"timber":25,"stone":15}'),
-  ('blossom', 'Blossom tree', '{"seeds":20,"coins":15}'),
-  ('lighthouse', 'Lighthouse', '{"stone":40,"paper":30}'),
-  ('boat', 'Sailboat', '{"timber":30,"coins":25}');
-
-create table public.plot_state (
-  user_id    uuid primary key references public.profiles on delete cascade,
-  buildings  text[] not null default '{house}',
-  spent      jsonb not null default '{}'
-);
-
-create table public.feed_events (
-  id          uuid primary key default gen_random_uuid(),
-  group_id    uuid not null references public.groups on delete cascade,
-  user_id     uuid not null references public.profiles on delete cascade,
-  kind        text not null,  -- daily_summary, streak, build, goal_hit, goal_missed, group_target
+  user_id     uuid not null references public.profiles on delete cascade default auth.uid(),
+  key         text not null,     -- client id, makes retries idempotent; 'day:YYYY-MM-DD' for the daily card
+  kind        text not null check (kind in ('day', 'stack', 'goal', 'item', 'milestone', 'build')),
   payload     jsonb not null default '{}',
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (user_id, key),
+  check (pg_column_size(payload) < 20000)
 );
-create index on public.feed_events (group_id, created_at desc);
+create index on public.events (updated_at desc);
 
 create table public.reactions (
-  event_id  uuid references public.feed_events on delete cascade,
-  user_id   uuid references public.profiles on delete cascade,
-  kind      text not null check (kind in ('nice', 'fire', 'clap', 'wow', 'nudge')),
-  primary key (event_id, user_id, kind)
+  event_id    uuid references public.events on delete cascade,
+  user_id     uuid references public.profiles on delete cascade default auth.uid(),
+  emoji       text not null check (emoji in ('🔥', '👏', '⛳', '😮', '😬')),
+  created_at  timestamptz not null default now(),
+  primary key (event_id, user_id, emoji)
 );
 
 create table public.comments (
   id          uuid primary key default gen_random_uuid(),
-  event_id    uuid not null references public.feed_events on delete cascade,
-  user_id     uuid not null references public.profiles on delete cascade,
-  body        text not null check (length(body) between 1 and 500),
+  event_id    uuid not null references public.events on delete cascade,
+  user_id     uuid not null references public.profiles on delete cascade default auth.uid(),
+  body        text not null check (char_length(body) between 1 and 500),
   created_at  timestamptz not null default now()
 );
+create index on public.comments (event_id, created_at);
 
--- ---------- visibility helper ----------
+-- ---------- helpers ----------
+-- security definer so policies can ask "do we share a group" without recursing through
+-- group_members' own policy.
 
--- True when `other` shares a group with the caller (or is the caller).
-create or replace function public.is_groupmate(other uuid) returns boolean
+create or replace function public.is_member(gid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from group_members where group_id = gid and user_id = auth.uid());
+$$;
+
+create or replace function public.shares_group(other uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select other = auth.uid() or exists (
-    select 1 from group_members a join group_members b using (group_id)
+    select 1 from group_members a join group_members b on a.group_id = b.group_id
     where a.user_id = auth.uid() and b.user_id = other
   );
 $$;
 
--- ---------- game engine: yield is computed here so nobody can edit their own resources ----------
+-- updated_at on upsert
+create or replace function public.touch() returns trigger language plpgsql as $$
+begin new.updated_at := now(); return new; end $$;
+create trigger touch before update on public.cards   for each row execute function public.touch();
+create trigger touch before update on public.backups for each row execute function public.touch();
+create trigger touch before update on public.events  for each row execute function public.touch();
 
-create or replace function public.habit_streak_before(h public.habits, d date) returns int
-language plpgsql stable as $$
-declare
-  n int := 0;
-  cur date := d - 1;
+-- ---------- group RPCs ----------
+-- Groups are created and joined through these, never by direct insert, so nobody can add
+-- themselves to a group without its code.
+
+create or replace function public.create_group(group_name text) returns public.groups
+language plpgsql security definer set search_path = public as $$
+declare g groups;
 begin
-  -- Daily and weekday habits only; weekly quotas get no streak bonus server side for now.
-  if h.schedule->>'kind' = 'weekly' then return 0; end if;
-  while cur >= h.created_at and n < 400 loop
-    if h.schedule->>'kind' = 'days'
-       and not (h.schedule->'days') @> to_jsonb(extract(dow from cur)::int) then
-      cur := cur - 1; continue;
-    end if;
-    exit when not exists (select 1 from habit_logs where habit_id = h.id and log_date = cur and done);
-    n := n + 1;
-    cur := cur - 1;
-  end loop;
-  return n;
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  insert into groups (name, created_by) values (trim(group_name), auth.uid()) returning * into g;
+  insert into group_members (group_id, user_id) values (g.id, auth.uid());
+  return g;
 end $$;
 
-create or replace function public.score_log() returns trigger
+create or replace function public.join_group(code text) returns public.groups
 language plpgsql security definer set search_path = public as $$
-declare
-  h habits;
-  bucket_max numeric;
-  mult numeric;
+declare g groups;
 begin
-  select * into h from habits where id = new.habit_id;
-  if h.user_id <> new.user_id then raise exception 'habit does not belong to user'; end if;
-
-  bucket_max := case new.bucket when 'u15' then 15 when '15' then 30 when '30' then 60 when '60' then 120 else null end;
-  new.done := case h.type
-    when 'check' then new.value >= 1
-    when 'count' then new.value >= h.target
-    when 'duration' then new.value >= h.target
-    when 'limit' then bucket_max is not null and bucket_max <= h.target
-  end;
-
-  -- Verified must be backed by a real timer session of 10+ minutes that day.
-  if new.trust = 'verified' and not exists (
-    select 1 from study_sessions s
-    where s.habit_id = new.habit_id and s.duration_s >= 600
-      and (s.started_at at time zone (select timezone from profiles where id = new.user_id))::date = new.log_date
-  ) then
-    new.trust := 'honour';
-  end if;
-  if new.trust = 'proof' and new.proof_url is null then new.trust := 'honour'; end if;
-
-  mult := case new.trust when 'verified' then 1.5 when 'proof' then 1.2 else 1.0 end;
-  new.yield := case when new.done
-    then round(10 * mult * (1 + least(0.5, 0.02 * habit_streak_before(h, new.log_date))))
-    else 0 end;
-  return new;
-end $$;
-
-create trigger score_log before insert or update on public.habit_logs
-  for each row execute function public.score_log();
-
-create or replace view public.v_resources with (security_invoker = true) as
-select p.id as user_id, r.key as resource,
-  coalesce(e.earned, 0) - coalesce((ps.spent->>r.key)::int, 0) as amount
-from profiles p
-cross join (values ('timber'), ('paper'), ('stone'), ('seeds'), ('coins')) as r(key)
-left join plot_state ps on ps.user_id = p.id
-left join lateral (
-  select sum(l.yield) as earned
-  from habit_logs l join habits h on h.id = l.habit_id
-  where l.user_id = p.id and case h.category
-    when 'study' then 'timber' when 'reading' then 'paper' when 'fitness' then 'stone'
-    when 'screen' then 'seeds' else 'coins' end = r.key
-) e on true;
-
--- The only way to spend resources.
-create or replace function public.build(building text) returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  c jsonb;
-  k text;
-  have int;
-begin
-  select cost into c from buildings where id = building;
-  if c is null then raise exception 'unknown building'; end if;
-  insert into plot_state (user_id) values (auth.uid()) on conflict do nothing;
-  if exists (select 1 from plot_state where user_id = auth.uid() and building = any(buildings)) then
-    raise exception 'already built';
-  end if;
-  for k in select jsonb_object_keys(c) loop
-    select amount into have from v_resources where user_id = auth.uid() and resource = k;
-    if coalesce(have, 0) < (c->>k)::int then raise exception 'not enough %', k; end if;
-  end loop;
-  update plot_state set
-    buildings = buildings || building,
-    spent = (select coalesce(jsonb_object_agg(key, coalesce((spent->>key)::int, 0) + coalesce((c->>key)::int, 0)), '{}')
-             from (select jsonb_object_keys(spent || c) as key) ks)
-  where user_id = auth.uid();
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  select * into g from groups where invite_code = upper(regexp_replace(code, '[^A-Za-z0-9]', '', 'g'));
+  if g.id is null then raise exception 'No group with that code'; end if;
+  if (select count(*) from group_members where group_id = g.id) >= 30 then raise exception 'Group is full'; end if;
+  insert into group_members (group_id, user_id) values (g.id, auth.uid()) on conflict do nothing;
+  return g;
 end $$;
 
 -- ---------- row level security ----------
 
-alter table public.profiles enable row level security;
-alter table public.groups enable row level security;
+alter table public.profiles      enable row level security;
+alter table public.groups        enable row level security;
 alter table public.group_members enable row level security;
-alter table public.habits enable row level security;
-alter table public.habit_logs enable row level security;
-alter table public.study_sessions enable row level security;
-alter table public.goals enable row level security;
-alter table public.goal_milestones enable row level security;
-alter table public.buildings enable row level security;
-alter table public.plot_state enable row level security;
-alter table public.feed_events enable row level security;
-alter table public.reactions enable row level security;
-alter table public.comments enable row level security;
+alter table public.cards         enable row level security;
+alter table public.backups       enable row level security;
+alter table public.events        enable row level security;
+alter table public.reactions     enable row level security;
+alter table public.comments      enable row level security;
 
-create policy "read groupmates" on public.profiles for select using (is_groupmate(id));
-create policy "edit self" on public.profiles for all using (id = auth.uid()) with check (id = auth.uid());
+create policy "friends read profiles" on public.profiles for select using (shares_group(id));
+create policy "insert own profile"    on public.profiles for insert with check (id = auth.uid());
+create policy "update own profile"    on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
 
-create policy "members read group" on public.groups for select using (
-  exists (select 1 from group_members where group_id = id and user_id = auth.uid()));
-create policy "members read members" on public.group_members for select using (is_groupmate(user_id));
--- Joining by invite code goes through an edge function using the service key, not a client insert.
+create policy "members read group"   on public.groups for select using (is_member(id));
 
--- Private habits stay private; summary habits are visible but their logs are not.
-create policy "own habits" on public.habits for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "friends see shared habits" on public.habits for select using (
-  visibility <> 'private' and is_groupmate(user_id));
+create policy "members read members" on public.group_members for select using (is_member(group_id));
+create policy "leave group"          on public.group_members for delete using (user_id = auth.uid());
 
-create policy "own logs" on public.habit_logs for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "friends see shared logs" on public.habit_logs for select using (
-  is_groupmate(user_id) and exists (select 1 from habits h where h.id = habit_id and h.visibility = 'friends'));
+create policy "friends read cards" on public.cards for select using (shares_group(user_id));
+create policy "insert own card"    on public.cards for insert with check (user_id = auth.uid());
+create policy "update own card"    on public.cards for update using (user_id = auth.uid()) with check (user_id = auth.uid());
 
-create policy "own sessions" on public.study_sessions for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "own goals" on public.goals for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "friends see goals" on public.goals for select using (is_groupmate(user_id));
-create policy "own milestones" on public.goal_milestones for all using (
-  exists (select 1 from goals g where g.id = goal_id and g.user_id = auth.uid()));
+create policy "own backup" on public.backups for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
-create policy "anyone reads catalogue" on public.buildings for select using (true);
-create policy "read plots" on public.plot_state for select using (is_groupmate(user_id));
--- No insert/update policy on plot_state: only build() can change it.
+create policy "friends read events" on public.events for select using (shares_group(user_id));
+create policy "insert own events"   on public.events for insert with check (user_id = auth.uid());
+create policy "update own events"   on public.events for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "delete own events"   on public.events for delete using (user_id = auth.uid());
 
-create policy "group reads feed" on public.feed_events for select using (
-  exists (select 1 from group_members where group_id = feed_events.group_id and user_id = auth.uid()));
-create policy "group reacts" on public.reactions for all using (
-  user_id = auth.uid()) with check (user_id = auth.uid()
-  and exists (select 1 from feed_events e join group_members m on m.group_id = e.group_id
-              where e.id = event_id and m.user_id = auth.uid()));
-create policy "group reads reactions" on public.reactions for select using (
-  exists (select 1 from feed_events e join group_members m on m.group_id = e.group_id
-          where e.id = event_id and m.user_id = auth.uid()));
-create policy "group comments" on public.comments for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-create policy "group reads comments" on public.comments for select using (
-  exists (select 1 from feed_events e join group_members m on m.group_id = e.group_id
-          where e.id = event_id and m.user_id = auth.uid()));
+-- reactions and comments: visible and allowed on any event you can see
+create policy "read reactions" on public.reactions for select
+  using (exists (select 1 from events e where e.id = event_id));
+create policy "react" on public.reactions for insert
+  with check (user_id = auth.uid() and exists (select 1 from events e where e.id = event_id));
+create policy "unreact" on public.reactions for delete using (user_id = auth.uid());
+
+create policy "read comments" on public.comments for select
+  using (exists (select 1 from events e where e.id = event_id));
+create policy "comment" on public.comments for insert
+  with check (user_id = auth.uid() and exists (select 1 from events e where e.id = event_id));
+create policy "delete own comment" on public.comments for delete
+  using (user_id = auth.uid() or exists (select 1 from events e where e.id = event_id and e.user_id = auth.uid()));
+
+-- ---------- grants ----------
+-- Supabase grants these to anon/authenticated by default; repeated so the file also runs
+-- on plain Postgres for testing. Anonymous users get nothing: every policy needs auth.uid().
+
+revoke all on all tables in schema public from anon;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant execute on function public.create_group(text), public.join_group(text) to authenticated;
+revoke execute on function public.create_group(text), public.join_group(text) from anon, public;
