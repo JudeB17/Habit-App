@@ -9,8 +9,13 @@ import { getState, subscribe, clearOutbox, actions, isFresh } from './store.js';
 import { buildCard, dayPayload } from './card.js';
 import { dayKey } from './dates.js';
 
-const URL = import.meta.env.VITE_SUPABASE_URL;
-const KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Both values are public by design (row level security does the protecting), so the
+// project's own pair is the fallback when the build variables are missing or malformed.
+const ENV_URL = import.meta.env.VITE_SUPABASE_URL;
+const ENV_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const okUrl = (u) => /^https?:\/\/[^/]+\.supabase\.co\/?$|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(u ?? '');
+const URL = okUrl(ENV_URL) ? ENV_URL : 'https://ewxzobteztmhmmciqklg.supabase.co';
+const KEY = ENV_KEY || 'sb_publishable_EeU3mFiIBAi_g235ge6lqg_-6rJoLVe';
 export const configured = !!(URL && KEY);
 
 export const sb = configured
