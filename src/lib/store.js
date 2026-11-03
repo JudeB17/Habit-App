@@ -2,13 +2,16 @@
 // feed events from `outbox`, and a private backup to Supabase when signed in.
 
 import { useSyncExternalStore } from 'react';
-import { dayKey, addDays, weekday, weekStart, daysBetween } from './dates.js';
+import { dayKey, addDays, weekday, weekStart, daysBetween, parseKey } from './dates.js';
 import {
   yieldFor, bucketPasses, MIN_VERIFIED_SESSION_S, LEAVE_GRACE_MS, blockPay, STACK_BONUS,
   STACK_DROP_CHANCE, newCourse, DECAY_PER_DAY, DECAY_FLOOR, DAMAGE_HIT, DAMAGE_FLOOR,
   DAMAGE_KINDS, REPAIR_COST, maintainCost, PART_COST, PART_MAX, CLUBHOUSE, rollDrop,
   dropById, RARITY, STREAK_MILESTONES, HOLE_COUNT, POMO_PRESETS, upkeepCost, REPAIR_MATS,
   START_MATERIALS, MATERIAL_KEYS, BARN, OVERFLOW_PRICE, rollChest, CHESTS, GOAL_SIZES, goalChest,
+  AMENITIES, AMENITY_KEYS, AMENITY_MAX, TIERS, PROMOTE_DAYS, DEMOTE_DAYS, CONSISTENCY_DAYS, HIT_FADE_DAYS,
+  qualityScore, consistencyMult, courseRating, facilitiesScore, FINES, DAILY_FINE_CAP, POP_HITS,
+  MAX_FINE_DAYS, NEGLECT, PARTS,
 } from './game.js';
 
 const KEY = 'isle.v1'; // kept so existing data on the phone carries over
@@ -55,6 +58,19 @@ function initialState() {
     barn: 0,
     chests: [],      // unopened: { id, kind, reason, at }
     outbox: [],      // feed events waiting to publish: { key, kind, payload, at }
+    ...freshRep(dayKey()),
+  };
+}
+
+/** Popularity, tier, penalty and amenity state. `since` stops fines reaching back past install. */
+function freshRep(today) {
+  return {
+    amen: { carts: 0, shop: 0, range: 0 },
+    rep: { tier: 0, up: 0, down: 0, evalFrom: today, since: today, neglect: 0 },
+    hits: [],        // popularity hits: { day, pts, why }, fade over HIT_FADE_DAYS
+    fines: [],       // recent fines for the UI: { id, day, amount, label }
+    finesTotal: 0,   // all fines ever, subtracted from the balance
+    report: null,    // the last daily bill, shown once
   };
 }
 
@@ -63,6 +79,12 @@ function migrate(raw) {
   if (raw.v === 2) {
     const out = { ...initialState(), ...raw };
     out.goals = out.goals.map((g) => ({ size: 'medium', ...g }));
+    if (!raw.rep) {
+      // First open with tiers: nothing before today gets fined, and overdue goals are let off.
+      const today = dayKey();
+      Object.assign(out, freshRep(today));
+      out.goals = out.goals.map((g) => (!g.doneAt && g.due < today ? { ...g, fined: true } : g));
+    }
     return out;
   }
   const base = initialState();
@@ -199,9 +221,73 @@ export function overallStreak(s, day = dayKey()) {
 }
 
 export function balance(s) {
-  let total = s.earned - s.spent;
+  let total = s.earned - s.spent - (s.finesTotal ?? 0);
   for (const byDay of Object.values(s.logs)) for (const log of Object.values(byDay)) total += log.yield ?? 0;
   return total;
+}
+
+// ---------- popularity ----------
+
+/** 0 to 1: share of scheduled habits hit over the last 14 days (not today), blended with
+ *  Pomodoro completion. null when there's no history yet. */
+export function consistency(s, today = dayKey()) {
+  const from = addDays(today, -CONSISTENCY_DAYS);
+  let due = 0;
+  let done = 0;
+  for (let d = from; d < today; d = addDays(d, 1)) {
+    for (const h of s.habits) {
+      if (h.archived || h.createdAt >= d) continue;
+      if (h.schedule.kind === 'weekly') {
+        // Count a weekly habit once, on the last day of a week that's over.
+        if (addDays(weekStart(d), 6) !== d || h.createdAt > weekStart(d)) continue;
+        due += h.schedule.times;
+        done += Math.min(h.schedule.times, weekCount(s, h, d));
+        continue;
+      }
+      if (!isScheduledDay(h, d)) continue;
+      due++;
+      if (isDone(s, h.id, d)) done++;
+    }
+  }
+  const t0 = parseKey(from).getTime();
+  let ok = 0;
+  let fail = 0;
+  for (const r of s.runs) {
+    if (r.startedAt < t0) continue;
+    for (const x of r.results) x === 'ok' ? ok++ : fail++;
+  }
+  const hit = due ? done / due : null;
+  const pomo = ok + fail ? ok / (ok + fail) : null;
+  if (hit === null && pomo === null) return null;
+  if (hit === null) return pomo;
+  if (pomo === null) return hit;
+  return 0.75 * hit + 0.25 * pomo;
+}
+
+export function hitPoints(s, today = dayKey()) {
+  return (s.hits ?? []).reduce((a, x) => a + x.pts * Math.max(0, 1 - daysBetween(x.day, today) / HIT_FADE_DAYS), 0);
+}
+
+/** Popularity and what it's made of. */
+export function popularity(s, today = dayKey()) {
+  const amen = s.amen ?? {};
+  const rating = courseRating(s.course);
+  const facilities = facilitiesScore(s.course.clubhouse, amen);
+  const quality = qualityScore(s.course, amen);
+  const c = consistency(s, today);
+  const mult = consistencyMult(c ?? 0.5);
+  const hits = hitPoints(s, today);
+  const pop = Math.max(0, Math.min(100, Math.round(quality * mult - hits)));
+  return { pop, rating, facilities: Math.round(facilities), quality: Math.round(quality), consistency: c, mult, hits: Math.round(hits * 10) / 10 };
+}
+
+/** Where you are on the tier ladder and how close the next move is. */
+export function tierStatus(s, today = dayKey()) {
+  const r = s.rep ?? { tier: 0, up: 0, down: 0 };
+  const p = popularity(s, today);
+  const tier = TIERS[r.tier];
+  const next = TIERS[r.tier + 1] ?? null;
+  return { ...p, tierIdx: r.tier, tier, next, up: r.up, down: r.down };
 }
 
 // ---------- internal mutations ----------
@@ -288,6 +374,10 @@ function stock(mats) {
   return { added, sold };
 }
 
+function addHit(pts, why, day = dayKey()) {
+  commit({ ...state, hits: [...(state.hits ?? []), { day, pts, why }] });
+}
+
 function setHole(i, patch) {
   const holes = state.course.holes.map((h, j) => (j === i ? { ...h, ...patch } : h));
   commit({ ...state, course: { ...state.course, holes } });
@@ -324,8 +414,10 @@ export const breakLength = (t) => {
   const done = t.completed;
   return done > 0 && done % t.cfg.every === 0 ? t.cfg.long : t.cfg.brk;
 };
+/** Time spent paused in the current focus block, including a pause that's still going. */
+export const pausedFor = (t, now = Date.now()) => (t.pausedMs ?? 0) + (t.pausedAt ? now - t.pausedAt : 0);
 export function phaseEnd(t) {
-  if (t.phase === 'focus') return t.phaseStart + t.cfg.focus * 60_000;
+  if (t.phase === 'focus') return t.phaseStart + t.cfg.focus * 60_000 + pausedFor(t);
   if (t.phase === 'break') return t.phaseStart + breakLength(t) * 60_000;
   return null;
 }
@@ -357,12 +449,13 @@ function completeBlock(t, end) {
 
 function failBlock(t, reason) {
   updateRun(t.runId, 'fail');
+  addHit(POP_HITS.block, 'Failed a Pomodoro block');
   const dmg = damageHole(blockHole(t));
   const course = state.course;
   commit({ ...state, course: { ...course, nextHole: (course.nextHole + 1) % HOLE_COUNT } });
   emit('fail', { ...dmg, reason });
   post('stack', { habit: publicName(t.habitId), blocks: t.completed, planned: t.blocks, focus: t.cfg.focus, failed: true, hole: dmg.hole + 1, why: reason });
-  return { ...t, phase: 'failed', failReason: reason, damage: dmg, phaseStart: Date.now() };
+  return { ...t, phase: 'failed', failReason: reason, damage: dmg, phaseStart: Date.now(), pausedAt: null };
 }
 
 function finishRun(t) {
@@ -395,7 +488,7 @@ function advancePomo(now, gap) {
       if (now < end) break;
       t = completeBlock(t, end);
       if (t.completed >= t.blocks) { t = finishRun(t); break; }
-      t = { ...t, phase: 'break', phaseStart: end };
+      t = { ...t, phase: 'break', phaseStart: end, pausedMs: 0, pausedAt: null };
       continue;
     }
     if (t.phase === 'break') {
@@ -403,7 +496,7 @@ function advancePomo(now, gap) {
       if (now < end) break;
       // Away when the break ran out: wait for a tap, so the next block can't fail before you're back.
       const awayAtEnd = gap && gap.from <= end;
-      t = awayAtEnd ? { ...t, phase: 'ready', phaseStart: end } : { ...t, phase: 'focus', phaseStart: end };
+      t = awayAtEnd ? { ...t, phase: 'ready', phaseStart: end } : { ...t, phase: 'focus', phaseStart: end, pausedMs: 0, pausedAt: null };
       if (t.phase === 'ready') break;
       continue;
     }
@@ -423,6 +516,121 @@ function applyDecay(today = dayKey()) {
     cond: h.cond <= DECAY_FLOOR ? h.cond : Math.max(DECAY_FLOOR, h.cond - DECAY_PER_DAY * days),
   }));
   commit({ ...state, course: { ...c, holes, lastDecay: today } });
+}
+
+// ---------- the daily bill ----------
+// Runs on open. Every full day since the last run is judged: missed habits and blown limits
+// are fined, overdue goals are fined, neglected holes and amenities lose levels, and the tier
+// counters move. The result is kept in state.report so the app can show it once.
+
+const fineId = () => uid();
+
+function judgeDay(d, rep, out) {
+  const habitFines = [];
+  for (const h of state.habits) {
+    if (h.archived || h.createdAt >= d) continue;
+    if (h.schedule.kind === 'weekly') {
+      const ws = weekStart(d);
+      if (addDays(ws, 6) !== d || h.createdAt > ws) continue;
+      const short = h.schedule.times - weekCount(state, h, d);
+      for (let k = 0; k < short; k++) habitFines.push({ amount: FINES.missed, pts: POP_HITS.missed, label: `${h.name}: weekly quota short` });
+      continue;
+    }
+    if (!isScheduledDay(h, d) || isDone(state, h.id, d)) continue;
+    const log = getLog(state, h.id, d);
+    if (h.type === 'limit' && log?.bucket) habitFines.push({ amount: FINES.limit, pts: POP_HITS.limit, label: `${h.name}: over the limit` });
+    else habitFines.push({ amount: FINES.missed, pts: POP_HITS.missed, label: `${h.name}: missed` });
+  }
+  let room = DAILY_FINE_CAP;
+  for (const f of habitFines) {
+    const amount = Math.min(room, f.amount);
+    room -= amount;
+    if (amount < f.amount) out.capped = true;
+    out.fines.push({ id: fineId(), day: d, amount, label: f.label });
+    out.hits.push({ day: d, pts: f.pts, why: f.label });
+  }
+
+  const goals = state.goals.map((g) => {
+    if (g.fined || g.due !== d || (g.doneAt && g.doneAt <= d)) return g;
+    const size = g.size ?? 'medium';
+    const label = `Missed ${size} goal: ${g.title}`;
+    out.fines.push({ id: fineId(), day: d, amount: FINES.goal[size], label });
+    out.hits.push({ day: d, pts: POP_HITS.goal[size], why: label });
+    return { ...g, fined: true };
+  });
+  commit({ ...state, goals });
+
+  // Neglect. Uses today's condition for every day judged, so a long absence counts in full.
+  const holes = state.course.holes.map((h, i) => {
+    const floorDays = h.cond <= DECAY_FLOOR ? (h.floorDays ?? 0) + 1 : 0;
+    if (floorDays < NEGLECT.holeDays) return { ...h, floorDays };
+    const part = ['fairway', 'green', 'bunkers', 'tee'].sort((a, b) => h.lv[b] - h.lv[a])[0];
+    if (h.lv[part] === 0) return { ...h, floorDays: 0 };
+    out.regress.push(`Hole ${i + 1} ${PARTS.find((p) => p.id === part).label.toLowerCase()} dropped to level ${h.lv[part] - 1}`);
+    return { ...h, floorDays: 0, lv: { ...h.lv, [part]: h.lv[part] - 1 } };
+  });
+  commit({ ...state, course: { ...state.course, holes } });
+
+  const avg = holes.reduce((a, h) => a + h.cond, 0) / holes.length;
+  rep.neglect = avg <= NEGLECT.amenityCond ? (rep.neglect ?? 0) + 1 : 0;
+  if (rep.neglect >= NEGLECT.amenityDays) {
+    rep.neglect = 0;
+    const amen = state.amen;
+    const best = [...AMENITY_KEYS].sort((a, b) => amen[b] - amen[a])[0];
+    if (amen[best] > 0) {
+      out.regress.push(`${AMENITIES[best].label} dropped to ${AMENITIES[best].levels[amen[best] - 1].toLowerCase()}`);
+      commit({ ...state, amen: { ...amen, [best]: amen[best] - 1 } });
+    }
+  }
+}
+
+function moveTier(rep, today, out) {
+  const { pop } = popularity(state, today);
+  const next = TIERS[rep.tier + 1];
+  const cur = TIERS[rep.tier];
+  if (next && pop >= next.min) { rep.up++; rep.down = 0; }
+  else if (pop < cur.min) { rep.down++; rep.up = 0; }
+  else { rep.up = 0; rep.down = 0; }
+  if (rep.up >= PROMOTE_DAYS) {
+    out.tier = { from: rep.tier, to: rep.tier + 1 };
+    rep.tier++; rep.up = 0;
+  } else if (rep.down >= DEMOTE_DAYS && rep.tier > 0) {
+    out.tier = { from: rep.tier, to: rep.tier - 1 };
+    rep.tier--; rep.down = 0;
+  }
+}
+
+function rollover(today = dayKey()) {
+  applyDecay(today);
+  const rep = { ...state.rep };
+  if (rep.evalFrom >= today) return;
+  let from = rep.evalFrom < rep.since ? rep.since : rep.evalFrom;
+  const skipped = Math.max(0, daysBetween(from, today) - MAX_FINE_DAYS);
+  if (skipped) from = addDays(today, -MAX_FINE_DAYS);
+  const out = { days: [], fines: [], hits: [], regress: [], tier: null, capped: false, skipped };
+  for (let d = from; d < today; d = addDays(d, 1)) {
+    out.days.push(d);
+    judgeDay(d, rep, out);
+    // Hits land before the tier check so the day's misses count against it.
+    commit({ ...state, hits: [...(state.hits ?? []), ...out.hits.filter((x) => x.day === d)] });
+    moveTier(rep, today, out);
+  }
+  rep.evalFrom = today;
+  const total = out.fines.reduce((a, f) => a + f.amount, 0);
+  const hits = (state.hits ?? []).filter((x) => daysBetween(x.day, today) < HIT_FADE_DAYS);
+  const any = out.fines.length || out.regress.length || out.tier;
+  commit({
+    ...state,
+    rep,
+    hits,
+    finesTotal: (state.finesTotal ?? 0) + total,
+    fines: [...out.fines, ...(state.fines ?? [])].slice(0, 60),
+    report: any ? { ...out, total, at: Date.now() } : state.report,
+  });
+  if (out.tier) {
+    const up = out.tier.to > out.tier.from;
+    post('build', { what: 'tier', name: TIERS[out.tier.to].name, up });
+  }
 }
 
 /** Pay a cost: a number (money only) or { money, mats }. All or nothing. */
@@ -523,7 +731,18 @@ export const actions = {
   startNextBlock() {
     const t = state.timer;
     if (t?.kind !== 'pomo' || !['ready', 'break'].includes(t.phase)) return;
-    commit({ ...state, timer: { ...t, phase: 'focus', phaseStart: Date.now() } });
+    commit({ ...state, timer: { ...t, phase: 'focus', phaseStart: Date.now(), pausedMs: 0, pausedAt: null } });
+  },
+  /** Pause a focus block. The clock stops, but leaving the app still fails the block. */
+  pausePomo() {
+    const t = state.timer;
+    if (t?.kind !== 'pomo' || t.phase !== 'focus' || t.pausedAt) return;
+    commit({ ...state, timer: { ...t, pausedAt: Date.now() } });
+  },
+  resumePomo() {
+    const t = state.timer;
+    if (t?.kind !== 'pomo' || !t.pausedAt) return;
+    commit({ ...state, timer: { ...t, pausedMs: (t.pausedMs ?? 0) + (Date.now() - t.pausedAt), pausedAt: null } });
   },
   addBlock() {
     const t = state.timer;
@@ -554,11 +773,20 @@ export const actions = {
   dismissTimer() { commit({ ...state, timer: null }); },
 
   // ----- course -----
-  decay() { applyDecay(); },
+  /** Daily upkeep: decay, then the bill for any days since the last open. */
+  decay() { rollover(); },
+  dismissReport() { commit({ ...state, report: null }); },
+  buildAmenity(key) {
+    const lv = state.amen[key];
+    if (lv >= AMENITY_MAX || !spend(AMENITIES[key].cost[lv])) return false;
+    commit({ ...state, amen: { ...state.amen, [key]: lv + 1 } });
+    post('build', { what: 'amenity', name: `${AMENITIES[key].label}: ${AMENITIES[key].levels[lv + 1]}` });
+    return true;
+  },
   maintain(i) {
     const h = state.course.holes[i];
     if (!spend(maintainCost(h.cond))) return false;
-    setHole(i, { cond: 100 });
+    setHole(i, { cond: 100, floorDays: 0 });
     return true;
   },
   /** Maintain worst holes first, as many as money and materials cover. Returns holes done. */
@@ -574,7 +802,7 @@ export const actions = {
       fixed.push(i);
     }
     if (!fixed.length || !spend(upkeepCost(pts))) return 0;
-    commit({ ...state, course: { ...state.course, holes: state.course.holes.map((h, i) => (fixed.includes(i) ? { ...h, cond: 100 } : h)) } });
+    commit({ ...state, course: { ...state.course, holes: state.course.holes.map((h, i) => (fixed.includes(i) ? { ...h, cond: 100, floorDays: 0 } : h)) } });
     return fixed.length;
   },
   repair(i, damageId) {

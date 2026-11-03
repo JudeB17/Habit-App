@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CourseMap } from '../components/Course.jsx';
 import HabitCard from '../components/HabitCard.jsx';
 import Icon, { MoneyToken } from '../components/Icons.jsx';
-import { useStore, isDueOn, isDone, overallStreak, balance, upkeepAll } from '../lib/store.js';
+import { useStore, isDueOn, isDone, overallStreak, balance, upkeepAll, tierStatus } from '../lib/store.js';
 import { dayKey, headerDate, greeting } from '../lib/dates.js';
 import { money } from '../lib/game.js';
 
@@ -19,6 +19,7 @@ export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHa
   const dmg = s.course.holes.reduce((a, h) => a + h.damage.length, 0);
   const upkeep = upkeepAll(s).money;
   const allDone = due.length > 0 && doneCount === due.length;
+  const ts = tierStatus(s, day);
 
   const cardProps = { s, day, onOpen: onOpenHabit, onCount, onBucket, onTimer };
 
@@ -35,9 +36,10 @@ export default function Today({ onOpenHabit, onCount, onBucket, onTimer, onNewHa
       </header>
 
       <button className="island-card" onClick={goCourse} aria-label="Open your course">
-        <CourseMap course={s.course} items={s.items} barn={s.barn} />
+        <CourseMap course={s.course} items={s.items} barn={s.barn} amen={s.amen} pop={ts.pop} tier={ts.tierIdx} />
         <div className="res-row">
-          <span className="res-chip" data-res-target="money"><MoneyToken size={16} /> {money(bal)}</span>
+          <span className={`res-chip ${bal < 0 ? 'debt' : ''}`} data-res-target="money"><MoneyToken size={16} /> {bal < 0 ? `${money(-bal)} debt` : money(bal)}</span>
+          <span className="res-chip tier" style={{ background: ts.tier.sign, color: ts.tier.ink }}>{ts.tier.name} · {ts.pop}</span>
           <span className={`res-chip ${avg < 45 ? 'warn' : ''}`}>{avg}% kept</span>
           {dmg > 0 && <span className="res-chip warn">{dmg} to repair</span>}
           {s.chests.length > 0 && <span className="res-chip chest">{s.chests.length} chest{s.chests.length === 1 ? '' : 's'} to open</span>}

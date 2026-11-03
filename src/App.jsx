@@ -14,9 +14,9 @@ import { CourseMap, DropIcon } from './components/Course.jsx';
 import { ChestArt, MaterialToken } from './components/Icons.jsx';
 import { CountSheet, BucketSheet, StartTimerSheet } from './components/LogSheets.jsx';
 import { payout, fx } from './components/fx.jsx';
-import { useStore, actions, timerElapsedMs, getState, heartbeat, lastSeen, bus, phaseEnd } from './lib/store.js';
+import { useStore, actions, timerElapsedMs, getState, heartbeat, lastSeen, bus, phaseEnd, balance } from './lib/store.js';
 import { formatDuration } from './lib/dates.js';
-import { RARITY, money, newCourse, CHESTS, MATERIALS } from './lib/game.js';
+import { RARITY, money, newCourse, CHESTS, MATERIALS, TIERS } from './lib/game.js';
 import { sfx } from './lib/sound.js';
 
 const TABS = [
@@ -157,6 +157,7 @@ export default function App() {
       {s.timer?.kind === 'pomo' && timerOpen && <PomodoroScreen onClose={() => setTimerOpen(false)} />}
       {s.timer && s.timer.kind !== 'pomo' && timerOpen && <TimerScreen onClose={() => setTimerOpen(false)} />}
       {opened && <ChestOpen chestId={opened.id} onClose={() => setOpened(null)} />}
+      {s.report && !(s.timer?.kind === 'pomo' && timerOpen) && !opened && <DailyBill report={s.report} onClose={() => { actions.dismissReport(); if (s.report.tier) setTab('course'); }} />}
     </div>
   );
 }
@@ -220,6 +221,54 @@ function ChestOpen({ chestId, onClose }) {
   );
 }
 
+/** The morning bill: fines, lost levels and tier moves since the last open. */
+function DailyBill({ report: r, onClose }) {
+  const s = useStore();
+  const up = r.tier && r.tier.to > r.tier.from;
+  const down = r.tier && r.tier.to < r.tier.from;
+  useEffect(() => { up ? sfx.drop() : r.fines.length || down ? sfx.fail() : null; }, []);
+  const grouped = [];
+  for (const f of r.fines) {
+    const g = grouped.find((x) => x.label === f.label);
+    if (g) { g.n++; g.amount += f.amount; } else grouped.push({ label: f.label, n: 1, amount: f.amount });
+  }
+  const bal = balance(s);
+  const away = r.days.length > 1;
+  return (
+    <div className="drop-wrap">
+      <div className={`drop-modal bill ${up ? 'up' : ''}`} role="dialog" aria-modal="true" aria-label="Daily bill">
+        <span className="eyebrow">{away ? `${r.days.length} days since you opened the app` : 'Yesterday'}</span>
+        {r.tier && (
+          <div className={`tier-move ${up ? 'up' : 'down'}`}>
+            <span className="tier-badge" style={{ background: TIERS[r.tier.to].sign, color: TIERS[r.tier.to].ink }}>{TIERS[r.tier.to].name}</span>
+            <strong>{up ? 'Promoted' : 'Relegated'}</strong>
+            <span className="muted small">{up ? `Word got round. More golfers are booking tee times.` : `The course went quiet. You dropped from ${TIERS[r.tier.from].name}.`}</span>
+          </div>
+        )}
+        {r.fines.length > 0 && (
+          <>
+            <h2>{money(r.total)} in fines</h2>
+            <div className="bill-lines">
+              {grouped.map((g) => (
+                <div key={g.label} className="bill-line"><span className="grow">{g.label}{g.n > 1 ? ` x${g.n}` : ''}</span><span className="fine-amt">-{money(g.amount)}</span></div>
+              ))}
+            </div>
+            {r.capped && <p className="muted small">Habit fines stop at $60 a day.</p>}
+          </>
+        )}
+        {r.regress.length > 0 && (
+          <div className="bill-lines regress">
+            {r.regress.map((x) => <div key={x} className="bill-line"><span className="grow">{x}</span></div>)}
+          </div>
+        )}
+        {r.skipped > 0 && <p className="muted small">Only the last 7 days were billed.</p>}
+        {bal < 0 && <p className="debt-note">You're {money(-bal)} in debt. Building and upkeep are locked until earnings clear it.</p>}
+        <button className="btn dark full tall" onClick={onClose}>{r.fines.length ? 'Pay up' : up ? 'Nice' : 'OK'}</button>
+      </div>
+    </div>
+  );
+}
+
 /** Dot on the Feed tab when friends have posted since you last looked. */
 function FeedDot() {
   const so = useSocial();
@@ -239,7 +288,7 @@ function TimerPill({ onOpen }) {
   return (
     <button className="timer-pill" onClick={onOpen}>
       <span className={`live-dot ${pomo || t.running ? '' : 'paused'}`} />
-      <strong>{pomo ? (t.phase === 'break' ? 'Break' : 'Pomodoro') : habit?.name ?? 'Timer'}</strong>
+      <strong>{pomo ? (t.phase === 'break' ? 'Break' : t.pausedAt ? 'Paused' : 'Pomodoro') : habit?.name ?? 'Timer'}</strong>
       <span className="mono">{formatDuration(shown)}</span>
       <span className="pill-open">Open</span>
     </button>
@@ -256,7 +305,7 @@ function Onboarding() {
     <main className="onboard">
       <div className="onboard-art"><CourseMap course={demo} barn={0} label="A scruffy 18 hole course" /></div>
       <h1>Run a golf course by doing the things you said you'd do.</h1>
-      <p className="muted">Habits and Pomodoro blocks earn money. Goals earn chests of fuel, water, seed and more. You need both to keep 18 holes mown. Skip days and the grass browns. Bail on a focus block and a hole takes damage.</p>
+      <p className="muted">Habits and Pomodoro blocks earn money. Goals earn chests of fuel, water, seed and more. Keep the course good and keep showing up, and golfers come: Municipal all the way to Championship. Skip habits and you get fined, golfers drift off, and neglected holes lose their upgrades.</p>
       <label className="label" htmlFor="ob-name">What should friends call you?</label>
       <input id="ob-name" className="field" value={name} autoComplete="given-name" onChange={(e) => setName(e.target.value)} placeholder="Name" />
       {ios && !standalone && (

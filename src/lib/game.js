@@ -66,7 +66,7 @@ export const PART_COST = [60, 140, 260];         // to reach level 1, 2, 3
 export const PART_MAX = PART_COST.length;
 export const CLUBHOUSE = [
   { name: 'Starter shed', cost: 0 },
-  { name: 'Pro shop', cost: 150 },
+  { name: 'Club hut', cost: 150 },
   { name: 'Clubhouse', cost: 400 },
   { name: 'Clubhouse with terrace', cost: 800 },
   { name: 'Grand clubhouse', cost: 1500 },
@@ -232,3 +232,83 @@ export function rollDrop(rand = Math.random, boost = false) {
 
 /** Habit streak lengths that pay a drop. Weekly habits count weeks. */
 export const STREAK_MILESTONES = { days: [7, 21, 50, 100], weeks: [4, 12, 26] };
+
+// ---------- Amenities ----------
+// Built with money, like the clubhouse. They raise popularity and draw on the map's
+// entrance strip. Sustained neglect knocks them back down a level (see NEGLECT).
+
+export const AMENITIES = {
+  carts: { label: 'Cart fleet',    levels: ['None', '4 carts', '8 carts', '12 carts'],                 cost: [120, 300, 600], icon: 'cart' },
+  shop:  { label: 'Pro shop',      levels: ['Empty lot', 'Shop hut', 'Pro shop', 'Flagship pro shop'],  cost: [150, 350, 700], icon: 'tag' },
+  range: { label: 'Driving range', levels: ['Scrub', 'Practice net', 'Driving range', 'Target range'],   cost: [200, 450, 900], icon: 'target' },
+};
+export const AMENITY_KEYS = Object.keys(AMENITIES);
+export const AMENITY_MAX = 3;
+export const cartsOwned = (lv) => [0, 4, 8, 12][lv] ?? 0;
+
+// ---------- Popularity and tiers ----------
+// popularity = quality x consistency - recent penalties, 0 to 100.
+// quality: 70% course rating (condition and hole upgrades), 30% facilities.
+// consistency: habit hit rate over the last 14 days (75%) and Pomodoro completion (25%),
+// mapped to a 0.5x to 1.2x multiplier. A great course you've stopped working for empties out.
+
+export const TIERS = [
+  { name: 'Municipal',    min: 0,  sign: '#E9DFCB', ink: '#161616' },
+  { name: 'Public',       min: 25, sign: '#FFFFFF', ink: '#161616' },
+  { name: 'Resort',       min: 45, sign: '#FFD23F', ink: '#161616' },
+  { name: 'Private club', min: 65, sign: '#3B5FD0', ink: '#FFFFFF' },
+  { name: 'Championship', min: 85, sign: '#2F9E44', ink: '#FFFFFF' },
+];
+/** Days at or above the next tier's line before promotion. */
+export const PROMOTE_DAYS = 3;
+/** Days below your tier's line before demotion. One bad day never costs a tier. */
+export const DEMOTE_DAYS = 5;
+export const CONSISTENCY_DAYS = 14;
+/** Popularity hits fade to nothing over this many days. */
+export const HIT_FADE_DAYS = 7;
+
+export function facilitiesScore(clubhouse, amen = {}) {
+  const a = (k) => (amen[k] ?? 0) / AMENITY_MAX;
+  return 100 * (0.4 * (clubhouse / (CLUBHOUSE.length - 1)) + 0.2 * a('shop') + 0.2 * a('range') + 0.2 * a('carts'));
+}
+export const qualityScore = (course, amen) => 0.7 * courseRating(course) + 0.3 * facilitiesScore(course.clubhouse, amen);
+export const consistencyMult = (c) => 0.5 + 0.7 * c;
+
+/** How many golfers and carts are out, from popularity. Pure, so friends' maps match. */
+export function crowd(pop, amen = {}) {
+  const p = Math.max(0, Math.min(100, pop)) / 100;
+  const groups = Math.max(1, Math.round(1 + p * 21));
+  const owned = cartsOwned(amen.carts ?? 0);
+  const cartsOut = Math.min(owned, Math.round(owned * (0.25 + 0.75 * p)));
+  const cars = 1 + Math.round(p * 15);
+  const rangeBays = [0, 3, 6, 9][amen.range ?? 0] ?? 0;
+  const atRange = Math.min(rangeBays, Math.round(rangeBays * (0.2 + 0.8 * p)));
+  return { groups, owned, cartsOut, cars, atRange, rangeBays };
+}
+
+// ---------- Penalties ----------
+
+export const FINES = {
+  missed: 10,       // a scheduled habit not done (or a weekly quota short, per missing day)
+  limit: 15,        // a limit habit logged over the limit
+  goal: { small: 20, medium: 50, big: 100 },
+};
+/** Habit fines stop at this much per day. Goal fines are separate. */
+export const DAILY_FINE_CAP = 60;
+export const POP_HITS = {
+  missed: 1,
+  limit: 1,
+  block: 2,
+  goal: { small: 3, medium: 5, big: 10 },
+};
+/** Away longer than this and only the most recent days get fined. */
+export const MAX_FINE_DAYS = 7;
+
+export const NEGLECT = {
+  /** A hole sitting at the decay floor this many days in a row loses an upgrade level. */
+  holeDays: 5,
+  /** Course average at or below this ... */
+  amenityCond: 40,
+  /** ... for this many days in a row and the best amenity loses a level. */
+  amenityDays: 5,
+};

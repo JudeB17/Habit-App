@@ -183,7 +183,7 @@ function FriendsStrip({ friends, me, onFriend }) {
         return (
           <button key={f.id} role="listitem" className="friend-tile" onClick={() => onFriend(f.id)}>
             <div className="friend-map">
-              {fc ? <CourseMap course={fc.course} items={f.card.items} barn={f.card.barn} label={`${f.name}'s course`} /> : <div className="friend-map-empty">No course yet</div>}
+              {fc ? <CourseMap course={fc.course} items={f.card.items} barn={f.card.barn} amen={f.card.amen} pop={f.card.pop ?? 0} tier={f.card.tier ?? 0} label={`${f.name}'s course`} /> : <div className="friend-map-empty">No course yet</div>}
               <span className="friend-rating">{fc ? fc.rating : '–'}</span>
             </div>
             <div className="friend-meta">
@@ -217,7 +217,10 @@ function headline(e) {
     case 'goal': return p.title ? `Hit a ${p.size} goal: ${p.title}${p.late ? ' (late)' : ''}` : `Hit a ${p.size} goal${p.late ? ' (late)' : ''}`;
     case 'item': return `Found the ${p.name} in a chest`;
     case 'milestone': return `${p.n} ${p.unit} streak${p.habit ? ` on ${p.habit}` : ''}`;
-    case 'build': return `Built the ${p.name}`;
+    case 'build':
+      if (p.what === 'tier') return p.up ? `Course promoted to ${p.name}` : `Course relegated to ${p.name}`;
+      if (p.what === 'amenity') return `Built ${p.name}`;
+      return `Built the ${p.name}`;
     default: return '';
   }
 }

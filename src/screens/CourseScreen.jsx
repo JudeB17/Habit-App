@@ -3,10 +3,12 @@ import { CourseMap, HoleView, DropIcon } from '../components/Course.jsx';
 import Sheet from '../components/Sheet.jsx';
 import Icon, { MoneyToken, MaterialToken, ChestArt } from '../components/Icons.jsx';
 import { fx } from '../components/fx.jsx';
-import { useStore, actions, balance, canAfford, repairCost, upkeepAll, barnCap } from '../lib/store.js';
+import { useStore, actions, balance, canAfford, repairCost, upkeepAll, barnCap, tierStatus } from '../lib/store.js';
+import { AmenityArt, golfersOut } from '../components/Crowd.jsx';
 import {
   PARTS, PART_COST, PART_MAX, CLUBHOUSE, DROPS, RARITY, DAMAGE_KINDS, MATERIALS, MATERIAL_KEYS,
   maintainCost, courseRating, holeLevel, money, DECAY_PER_DAY, DECAY_FLOOR, BARN, CHESTS, shortfall,
+  AMENITIES, AMENITY_KEYS, AMENITY_MAX, TIERS, PROMOTE_DAYS, DEMOTE_DAYS, NEGLECT, crowd, FINES, DAILY_FINE_CAP, POP_HITS,
 } from '../lib/game.js';
 import { HOLES, PAR_TOTAL, yards } from '../lib/holes.js';
 import { sfx } from '../lib/sound.js';
@@ -46,6 +48,7 @@ export default function CourseScreen({ onOpenChest }) {
   const nextClub = CLUBHOUSE[c.clubhouse + 1];
   const owned = DROPS.filter((d) => (s.items[d.id] ?? 0) > 0).length;
   const anyHole = c.holes.some((h) => h.cond < 100 && canAfford(s, maintainCost(h.cond)));
+  const ts = tierStatus(s);
 
   function maintainAll() {
     const n = actions.maintainAll();
@@ -66,9 +69,18 @@ export default function CourseScreen({ onOpenChest }) {
       </header>
 
       <div className="course-hero">
-        <CourseMap course={c} items={s.items} barn={s.barn} onHole={setHole} highlight={hole} />
+        <CourseMap course={c} items={s.items} barn={s.barn} amen={s.amen} pop={ts.pop} tier={ts.tierIdx} onHole={setHole} highlight={hole} />
         <span className="hero-tag">Tap a hole</span>
       </div>
+
+      {bal < 0 && (
+        <div className="debt-box">
+          <strong>{money(-bal)} in debt</strong>
+          <span>Everything you earn pays this off first. Nothing can be built, maintained or repaired until it's cleared.</span>
+        </div>
+      )}
+
+      <PopularityCard ts={ts} amen={s.amen} />
 
       <div className="stat-tiles">
         <div className="stile"><strong>{rating}</strong><span>Rating</span></div>
@@ -92,6 +104,33 @@ export default function CourseScreen({ onOpenChest }) {
           </div>
         ) : <span className="muted small">All 18 holes are perfect.</span>}
       </div>
+
+      <div className="section-head"><h2>Amenities</h2><span className="count">{AMENITY_KEYS.reduce((a, k) => a + s.amen[k], 0)} / {AMENITY_KEYS.length * AMENITY_MAX}</span></div>
+      <div className="list-card">
+        {AMENITY_KEYS.map((k) => {
+          const A = AMENITIES[k];
+          const lv = s.amen[k];
+          const price = A.cost[lv];
+          return (
+            <div key={k} className="list-row amen-row">
+              <span className="amen-art"><AmenityArt k={k} lv={lv} size={40} /></span>
+              <span className="grow">
+                <strong>{A.label}</strong>
+                <span className="muted small">{A.levels[lv]}{lv < AMENITY_MAX ? ` · next: ${A.levels[lv + 1].toLowerCase()}` : ''}</span>
+                <span className="lv-pips">{Array.from({ length: AMENITY_MAX }, (_, i) => <span key={i} className={i < lv ? 'on' : ''} />)}</span>
+              </span>
+              {lv < AMENITY_MAX ? (
+                <button className={`btn ${bal >= price ? 'dark' : 'locked'}`} disabled={bal < price} onClick={() => { if (actions.buildAmenity(k)) { sfx.build(); fx.toast(`${A.label}: ${A.levels[lv + 1]}`); } }}>{money(price)}</button>
+              ) : <span className="muted small">Max</span>}
+            </div>
+          );
+        })}
+      </div>
+      {s.rep.neglect > 0 ? (
+        <p className="short-note">Course average is {avg}%. {NEGLECT.amenityDays - s.rep.neglect} more day{NEGLECT.amenityDays - s.rep.neglect === 1 ? '' : 's'} at {NEGLECT.amenityCond}% or under and your best amenity loses a level.</p>
+      ) : (
+        <p className="muted small">Amenities lift popularity and fill the entrance strip. Let the course average sit at {NEGLECT.amenityCond}% or under for {NEGLECT.amenityDays} days and the best one loses a level.</p>
+      )}
 
       <div className="section-head"><h2>Barn</h2><span className="count">{BARN[s.barn].name} · cap {barnCap(s)}</span></div>
       <div className="barn-card">
@@ -138,6 +177,7 @@ export default function CourseScreen({ onOpenChest }) {
                 <strong>Par {HOLES[i].par}</strong>
                 <span className="muted small">Lv {holeLevel(h)}/12</span>
                 {h.damage.length > 0 && <span className="dmg-pill">{h.damage.length} to repair</span>}
+                {(h.floorDays ?? 0) > 0 && holeLevel(h) > 0 && <span className="dmg-pill warn">{h.floorDays}/{NEGLECT.holeDays} days neglected</span>}
               </span>
               <span className={`cond-bar ${condClass(h.cond)}`}><span style={{ width: `${h.cond}%` }} /></span>
             </span>
@@ -158,6 +198,8 @@ export default function CourseScreen({ onOpenChest }) {
           </button>
         )}
       </div>
+
+      <Penalties s={s} />
 
       <div className="section-head"><h2>Collection</h2><span className="count">{owned} / {DROPS.length}</span></div>
       <p className="muted small">Items come out of chests: 10% of crates, 35% of chests, every big chest. They can't be bought.</p>
@@ -244,5 +286,67 @@ function HoleSheet({ i, onClose }) {
         })}
       </div>
     </Sheet>
+  );
+}
+
+function PopularityCard({ ts, amen }) {
+  const { pop, tier, next, tierIdx, up, down } = ts;
+  const prev = TIERS[tierIdx - 1];
+  const c = crowd(pop, amen);
+  let status;
+  if (next && pop >= next.min) status = <>Above the {next.name} line. Hold it <b>{PROMOTE_DAYS - up} more day{PROMOTE_DAYS - up === 1 ? '' : 's'}</b> to move up.</>;
+  else if (pop < tier.min && prev) status = <>Below the {tier.name} line{down ? ` for ${down} day${down === 1 ? '' : 's'}` : ''}. <b>{DEMOTE_DAYS - down} more</b> and you drop to {prev.name}.</>;
+  else if (next) status = <>{next.min - pop} points to {next.name}. Hold {next.min}+ for {PROMOTE_DAYS} days to move up.</>;
+  else status = <>Top of the ladder. Drop under {tier.min} for {DEMOTE_DAYS} days and you lose it.</>;
+  const hit = ts.consistency === null ? null : Math.round(ts.consistency * 100);
+  return (
+    <section className={`pop-card tier-${tierIdx}`}>
+      <div className="pop-head">
+        <span className="tier-badge" style={{ background: tier.sign, color: tier.ink }}>{tier.name}</span>
+        <span className="pop-num"><strong>{pop}</strong><span>/100 popularity</span></span>
+      </div>
+      <div className="pop-bar" aria-label={`Popularity ${pop} of 100`}>
+        <span className="pop-fill" style={{ width: `${pop}%` }} />
+        {TIERS.slice(1).map((t, i) => (
+          <span key={t.name} className={`pop-tick ${i + 1 <= tierIdx ? 'past' : ''}`} style={{ left: `${t.min}%` }}><i>{t.min}</i></span>
+        ))}
+      </div>
+      <p className="pop-status">{status}</p>
+      <div className="pop-parts">
+        <div><strong>{ts.quality}</strong><span>Quality</span></div>
+        <div><strong>x{ts.mult.toFixed(2)}</strong><span>{hit === null ? 'No history' : `${hit}% hit, 14 d`}</span></div>
+        <div className={ts.hits ? 'bad' : ''}><strong>-{Math.round(ts.hits)}</strong><span>Penalties</span></div>
+      </div>
+      <p className="muted small pop-crowd">
+        {golfersOut(pop, amen)} golfers out, {c.cartsOut} of {c.owned} carts, {c.cars} cars in the lot{c.rangeBays ? `, ${c.atRange} at the range` : ''}.
+        Quality is the course and its facilities. Missed habits and failed blocks pull the multiplier and penalties down.
+      </p>
+    </section>
+  );
+}
+
+function Penalties({ s }) {
+  const [open, setOpen] = useState(false);
+  const list = s.fines ?? [];
+  const recent = open ? list : list.slice(0, 4);
+  return (
+    <>
+      <div className="section-head"><h2>Penalties</h2><span className="count">{money(s.finesTotal ?? 0)} fined</span></div>
+      <div className="list-card">
+        {recent.map((f) => (
+          <div key={f.id} className="list-row fine-row">
+            <span className="grow"><strong>{f.label}</strong><span className="muted small">{f.day}</span></span>
+            <span className="fine-amt">-{money(f.amount)}</span>
+          </div>
+        ))}
+        {list.length === 0 && <p className="muted pad">No fines yet.</p>}
+        {list.length > 4 && <button className="btn ghost full" onClick={() => setOpen(!open)}>{open ? 'Show less' : `Show all ${list.length}`}</button>}
+      </div>
+      <p className="muted small">
+        Each morning the app bills yesterday: {money(FINES.missed)} per missed habit, {money(FINES.limit)} for going over a limit (capped at {money(DAILY_FINE_CAP)} a day),
+        and {money(FINES.goal.small)} / {money(FINES.goal.medium)} / {money(FINES.goal.big)} for a missed small, medium or big goal. Failed blocks cost {POP_HITS.block} popularity and damage a hole.
+        A hole left at {DECAY_FLOOR}% for {NEGLECT.holeDays} days loses an upgrade level.
+      </p>
+    </>
   );
 }

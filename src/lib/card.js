@@ -2,7 +2,7 @@
 // what's on the phone. Habit visibility: 'friends' shows the name and number, 'summary'
 // counts as "a private habit", 'private' is left out entirely.
 
-import { getLog, isDone, overallStreak, isDueOn, balance } from './store.js';
+import { getLog, isDone, overallStreak, isDueOn, balance, tierStatus } from './store.js';
 import { dayKey, addDays, daysBetween, formatMinutes } from './dates.js';
 import { bucketById, courseRating, DECAY_PER_DAY, DECAY_FLOOR } from './game.js';
 
@@ -64,6 +64,9 @@ export function buildCard(s) {
       lastDecay: c.lastDecay,
     },
     barn: s.barn,
+    amen: s.amen,
+    tier: s.rep?.tier ?? 0,
+    pop: tierStatus(s, today).pop,
     items: s.items,
     worth: Math.round(balance(s)),
     at: Date.now(),

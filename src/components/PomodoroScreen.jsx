@@ -62,6 +62,7 @@ export default function PomodoroScreen({ onClose }) {
   const canMinimise = t.phase !== 'focus';
   const R = 104;
   const C = 2 * Math.PI * R;
+  const paused = t.phase === 'focus' && !!t.pausedAt;
   const tint = t.phase === 'focus' ? CATEGORIES[habit.category].tint : '#A9C3FF';
 
   const run = s.runs.find((r) => r.id === t.runId);
@@ -77,7 +78,7 @@ export default function PomodoroScreen({ onClose }) {
   const twice = (key, fn) => () => (confirm === key ? (fn(), setConfirm(null)) : setConfirm(key));
 
   return (
-    <div className={`pomo-screen phase-${t.phase}`} role="dialog" aria-modal="true" aria-label={`${habit.name} Pomodoro`}>
+    <div className={`pomo-screen phase-${t.phase} ${paused ? 'paused' : ''}`} role="dialog" aria-modal="true" aria-label={`${habit.name} Pomodoro`}>
       <div className="pomo-hole">
         <HoleView i={holeIdx} h={hole} gold={(s.items.goldflags ?? 0) > 0} ball={ball} padBottom={110} />
         <span className="pomo-hole-tag">Hole {holeIdx + 1} · Par {par}</span>
@@ -108,15 +109,17 @@ export default function PomodoroScreen({ onClose }) {
                 <circle cx="120" cy="120" r={R + 8} fill="none" stroke="#161616" strokeWidth="2" />
               </svg>
               <div className="ring-center">
-                <span className="ring-label">{t.phase === 'focus' ? `Block ${results.length + 1} of ${t.blocks}` : isLong ? 'Long break' : 'Break'}</span>
+                <span className="ring-label">{paused ? 'Paused' : t.phase === 'focus' ? `Block ${results.length + 1} of ${t.blocks}` : isLong ? 'Long break' : 'Break'}</span>
                 <span className="ring-time" aria-live="off">{formatDuration(remaining)}</span>
-                <span className="ring-status">{t.phase === 'focus' ? `${money(blockPay(t.cfg.focus))} on finish` : 'Phone is fine now'}</span>
+                <span className="ring-status">{paused ? 'Clock stopped' : t.phase === 'focus' ? `${money(blockPay(t.cfg.focus))} on finish` : 'Phone is fine now'}</span>
               </div>
             </div>
             {dotRow}
             {t.phase === 'focus' && (
               <p className="leave-note">
-                <Icon name="lock" size={15} /> Leave the app for more than {LEAVE_GRACE_MS / 1000} s and this block fails. Locking the phone counts.
+                <Icon name="lock" size={15} /> {paused
+                  ? `Paused, but you still can't leave: more than ${LEAVE_GRACE_MS / 1000} s out of the app fails the block.`
+                  : `Leave the app for more than ${LEAVE_GRACE_MS / 1000} s and this block fails. Locking the phone counts.`}
               </p>
             )}
           </>
@@ -156,7 +159,10 @@ export default function PomodoroScreen({ onClose }) {
 
         {t.phase === 'focus' && (
           <div className="row gap pomo-actions">
-            <button className="btn ghost grow" onClick={() => { sfx.tap(); actions.addBlock(); }}><Icon name="plus" size={18} /> Block</button>
+            <button className={`btn grow ${paused ? 'dark' : 'ghost'}`} onClick={() => { sfx.tap(); paused ? actions.resumePomo() : actions.pausePomo(); }}>
+              <Icon name={paused ? 'play' : 'pause'} size={18} /> {paused ? 'Resume' : 'Pause'}
+            </button>
+            <button className="btn ghost" onClick={() => { sfx.tap(); actions.addBlock(); }} aria-label="Add a block"><Icon name="plus" size={18} /></button>
             <button className={`btn grow ${confirm === 'quit' ? 'danger' : 'ghost'}`} onClick={twice('quit', actions.giveUpBlock)}>
               {confirm === 'quit' ? 'Tap again: fails block' : 'Give up'}
             </button>

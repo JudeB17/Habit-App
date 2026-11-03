@@ -5,7 +5,7 @@ import { CourseMap, HoleView, DropIcon } from '../components/Course.jsx';
 import { useSocial, ago } from '../lib/social.js';
 import { friendCourse } from '../lib/card.js';
 import { HOLES, PAR_TOTAL, yards } from '../lib/holes.js';
-import { PARTS, PART_MAX, CLUBHOUSE, BARN, DROPS, RARITY, DAMAGE_KINDS, CATEGORIES, TRUST, holeLevel, money } from '../lib/game.js';
+import { PARTS, PART_MAX, CLUBHOUSE, BARN, DROPS, RARITY, DAMAGE_KINDS, CATEGORIES, TRUST, holeLevel, money, TIERS, AMENITIES, AMENITY_KEYS } from '../lib/game.js';
 import { formatMinutes, dayKey } from '../lib/dates.js';
 import { Avatar } from './Feed.jsx';
 
@@ -52,13 +52,13 @@ export default function FriendView({ id, onClose }) {
         ) : (
           <>
             <div className="course-hero">
-              <CourseMap course={fc.course} items={items} barn={card.barn ?? 0} onHole={setHole} highlight={hole} label={`${name} course`} />
+              <CourseMap course={fc.course} items={items} barn={card.barn ?? 0} amen={card.amen} pop={card.pop ?? 0} tier={card.tier ?? 0} onHole={setHole} highlight={hole} label={`${name} course`} />
               <span className="hero-tag">Tap a hole</span>
             </div>
             {fc.staleDays > 0 && <p className="muted small fv-note">Not opened for {fc.staleDays} day{fc.staleDays > 1 ? 's' : ''}, so the grass has been browning since.</p>}
 
             <div className="stat-tiles four">
-              <div className="stile"><strong>{fc.rating}</strong><span>Rating</span></div>
+              <div className="stile"><strong>{card.pop ?? '·'}</strong><span>{TIERS[card.tier ?? 0].name}</span></div>
               <div className={`stile ${condClass(fc.avg)}`}><strong>{fc.avg}%</strong><span>Condition</span></div>
               <div className={`stile ${fc.damaged ? 'bad' : ''}`}><strong>{fc.damaged}</strong><span>Damage</span></div>
               <div className="stile"><strong>{owned.length}</strong><span>Items</span></div>
@@ -66,6 +66,9 @@ export default function FriendView({ id, onClose }) {
 
             <div className="list-card fv-builds">
               <div className="list-row"><span className="grow"><strong>{CLUBHOUSE[fc.course.clubhouse]?.name}</strong><span className="muted small">Clubhouse {fc.course.clubhouse + 1}/{CLUBHOUSE.length}</span></span></div>
+              {card.amen && AMENITY_KEYS.map((k) => (
+                <div key={k} className="list-row"><span className="grow"><strong>{AMENITIES[k].levels[card.amen[k] ?? 0]}</strong><span className="muted small">{AMENITIES[k].label} {card.amen[k] ?? 0}/3</span></span></div>
+              ))}
               <div className="list-row"><span className="grow"><strong>{BARN[card.barn ?? 0]?.name}</strong><span className="muted small">Barn, holds {BARN[card.barn ?? 0]?.cap} of each material</span></span></div>
               <div className="list-row"><span className="grow"><strong>{money(card.worth ?? 0)}</strong><span className="muted small">In the bank</span></span></div>
             </div>

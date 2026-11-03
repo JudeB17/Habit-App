@@ -6,6 +6,10 @@ import {
   MAP_W, MAP_H, HOLES, CLUBHOUSE_AT, LAKE_AT, CENTRE_BOX, holeLayout, holeFrame, bez, normalAt,
   blob, holePath, mix, rng, SIZE, fairwayOutline, fairwaySpan,
 } from '../lib/holes.js';
+import { CourseCrowd, Entrance, BAND_H, standSpot } from './Crowd.jsx';
+
+/** Full map height: the 18 holes plus the entrance strip below them. */
+export const MAP_FULL_H = MAP_H + BAND_H;
 
 const INK = '#161616';
 const ROUGH = '#5E9E4E';
@@ -249,6 +253,7 @@ function Tree({ x, y, s = 1, kind = 0, autumn = false }) {
 
 // Tree spots on the map: sampled once, kept clear of fairways, greens, clubhouse and lake.
 let mapTrees;
+const STAND = standSpot().box;
 function getMapTrees() {
   if (mapTrees) return mapTrees;
   const rand = rng(4242);
@@ -269,6 +274,7 @@ function getMapTrees() {
     const y = 26 + rand() * (MAP_H - 30);
     if (x > CENTRE_BOX.x0 - 4 && x < CENTRE_BOX.x1 + 4 && y > CENTRE_BOX.y0 - 4 && y < CENTRE_BOX.y1 + 14) continue;
     if (pts.some(([px, py, r]) => Math.hypot(px - x, py - y) < r)) continue;
+    if (x > STAND.x0 && x < STAND.x1 && y > STAND.y0 && y < STAND.y1 + 12) continue;
     if (out.some((o) => Math.hypot(o.x - x, o.y - y) < 15)) continue;
     out.push({ x, y, s: 0.6 + rand() * 0.35, kind: rand() < 0.35 ? 1 : 0 });
   }
@@ -536,7 +542,7 @@ const DROP_SPOTS = {
 
 // ---------- map ----------
 
-export function CourseMap({ course, items = {}, onHole, className = '', label, highlight, barn = 0 }) {
+export function CourseMap({ course, items = {}, onHole, className = '', label, highlight, barn = 0, amen = {}, pop = 0, tier = 0 }) {
   const raw = useId().replace(/[^a-zA-Z0-9]/g, '');
   const id = (n) => `${n}${raw}`;
   const sh = `url(#${id('sh')})`;
@@ -548,13 +554,13 @@ export function CourseMap({ course, items = {}, onHole, className = '', label, h
 
   const mottles = useMemo(() => {
     const rand = rng(99);
-    return Array.from({ length: 26 }, (_, k) => blob(rand() * MAP_W, rand() * MAP_H, 30 + rand() * 50, 1200 + k, 0.4, 9));
+    return Array.from({ length: 30 }, (_, k) => blob(rand() * MAP_W, rand() * MAP_FULL_H, 30 + rand() * 50, 1200 + k, 0.4, 9));
   }, []);
 
   return (
-    <svg className={`course ${className}`} viewBox={`0 0 ${MAP_W} ${MAP_H}`} preserveAspectRatio="xMidYMid slice" role="img" aria-label={label ?? 'Your 18 hole course'}>
+    <svg className={`course ${className}`} viewBox={`0 0 ${MAP_W} ${MAP_FULL_H}`} preserveAspectRatio="xMidYMid slice" role="img" aria-label={label ?? 'Your 18 hole course'}>
       <Defs id={id} />
-      <rect width={MAP_W} height={MAP_H} fill={ROUGH} />
+      <rect width={MAP_W} height={MAP_FULL_H} fill={ROUGH} />
       {mottles.map((d, k) => <path key={k} d={d} fill={ROUGH_DARK} opacity="0.35" />)}
 
       {/* lake and clubhouse lawn */}
@@ -591,7 +597,10 @@ export function CourseMap({ course, items = {}, onHole, className = '', label, h
         {Object.entries(DROP_SPOTS).map(([k, p]) => p && has(k) && <DropPiece key={k} id={k} x={p[0]} y={p[1]} />)}
       </g>
 
-      <rect width={MAP_W} height={MAP_H} fill="#FFF" filter={`url(#${id('grain')})`} pointerEvents="none" />
+      <Entrance pop={pop} amen={amen} tier={tier} sh={sh} />
+      <CourseCrowd pop={pop} amen={amen} tier={tier} sh={sh} />
+
+      <rect width={MAP_W} height={MAP_FULL_H} fill="#FFF" filter={`url(#${id('grain')})`} pointerEvents="none" />
     </svg>
   );
 }
