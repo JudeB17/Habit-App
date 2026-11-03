@@ -55,6 +55,22 @@ The anon key is meant to be public. Row level security in the schema is what sto
 
 Free tier note: Supabase pauses a project after 7 days with no traffic. Daily use keeps it awake; if it pauses, hit Restore in the dashboard.
 
+## What's in 0.4: popularity, tiers and penalties
+
+| Area | Status |
+| --- | --- |
+| Popularity | 0 to 100. Quality (70% course rating, 30% facilities: clubhouse, pro shop, range, carts) x a consistency multiplier (0.5x to 1.2x from your last 14 days of habits and Pomodoro blocks) minus recent penalty points, which fade over 7 days |
+| Tiers | Municipal, Public (25), Resort (45), Private club (65), Championship (85). Promoted after 3 days at or above the next line, relegated after 5 days below yours |
+| Crowd | Golfer groups, carts out on the course, cars in the lot and people at the range all scale with popularity. Championship adds a grandstand and gallery at the 18th and a leaderboard. Friends see the same crowd on your course |
+| Amenities | Cart fleet ($120 / $300 / $600), pro shop ($150 / $350 / $700), driving range ($200 / $450 / $900), drawn on a new entrance strip with the car park and tier sign |
+| Fines | Billed on open for each full day since the last open: $10 per missed habit, $15 for a limit habit logged over, $10 per missing completion on a weekly quota at week end. Habit fines cap at $60 a day. Missed goals: $20 / $50 / $100 by size. Only the last 7 days are billed after an absence |
+| Popularity hits | -1 per missed habit or blown limit, -2 per failed block, -3 / -5 / -10 per missed goal |
+| Debt | Fines can take the balance negative. Earnings pay it off first; nothing can be built, maintained or repaired until it's cleared |
+| Regression | A hole at the 30% floor for 5 days in a row loses one upgrade level. Course average at 40% or under for 5 days in a row and the best amenity loses a level |
+| Daily bill | A card on open listing fines, lost levels and tier moves |
+| Pause | Focus blocks can be paused as often as needed. The clock stops, but leaving the app while paused still fails the block |
+| Upgrade from 0.3 | Nothing before the update is billed, overdue goals are let off, everyone starts Municipal |
+
 ## What's in 0.3: friends
 
 | Area | Status |
@@ -100,12 +116,15 @@ src/
   lib/holes.js       geometry for the 18 holes, shared by the map and hole view
   lib/dates.js       local day keys (never UTC)
   lib/sound.js       synthesised sounds, no audio files
-  components/        Course (map, hole view, clubhouse, drops), PomodoroScreen, HabitCard, sheets, fx
+  components/        Course (map, hole view, clubhouse, drops), Crowd (golfers, carts, entrance strip), PomodoroScreen, HabitCard, sheets, fx
   screens/           Today, Course, Feed, FriendView, Stats, Plan, Me
 supabase/schema.sql  profiles, groups, cards, events, reactions, comments, backups + RLS
 ```
 
 ## Known limits
+
+- No holiday mode yet. Fines, decay and regression keep running while you're away (billing stops at 7 days).
+- Neglect counters use the course's condition at the time of the bill for every day billed, so a long absence counts in full.
 
 - Data lives in localStorage on one device. Signed in, there's a cloud backup; signed out, clearing Safari website data wipes it, so export a backup.
 - One phone per account. The backup is last-write-wins for the whole state, so using two phones on the same account will overwrite one with the other.
