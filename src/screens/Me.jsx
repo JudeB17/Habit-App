@@ -75,7 +75,7 @@ export default function Me({ onOpenHabit, onNewHabit, goFeed }) {
           <span className="grow"><strong>{confirmReset ? 'Tap again to wipe everything' : 'Reset all data'}</strong></span>
         </button>
       </div>
-      <p className="muted small center-text">Fairway 0.3</p>
+      <p className="muted small center-text">Fairway {__APP_VERSION__} · built {new Date(__BUILT_AT__).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</p>
     </main>
   );
 }

@@ -82,7 +82,7 @@ Free tier note: Supabase pauses a project after 7 days with no traffic. Daily us
 | Feed | One card per person per day that updates as habits are ticked off, plus moments: finished or failed Pomodoro stacks, goals (names can be hidden in Me), new items, streak milestones, clubhouse and barn builds |
 | Reactions and comments | 5 reactions per post, comments with delete for your own and on your own posts |
 | Sync | Local-first. Changes publish 4 s after they happen, when the app is hidden, and when it comes back online. Feed refreshes on open and every 90 s while visible |
-| Backup | Full state saved privately every 10 min while signed in. Sign in on a new phone and it offers to restore. A fresh install never overwrites the cloud backup and publishes nothing until it's restored |
+| Backup | Full state saved privately every 2 min while signed in, and whenever the app is hidden. Sign in on a new phone and it offers to restore. A fresh install never overwrites the cloud backup and publishes nothing until it's restored |
 
 ## What's in 0.2: solo core
 
@@ -122,6 +122,9 @@ supabase/schema.sql  profiles, groups, cards, events, reactions, comments, backu
 ```
 
 ## Known limits
+
+- On iPhone, every home screen install has its own storage, and Safari has another. Deleting and re-adding the icon, or opening the link in Safari, starts empty. Updates now install themselves when the app is reopened (check the version at the bottom of Me), so there's no need to reinstall. If a phone does start empty, the first screen has "I already have a course: restore it" (cloud backup or a backup file).
+- A cloud backup made by another install is never overwritten automatically. Sync pauses until you restore it or choose "Keep this phone's" on the Feed tab.
 
 - No holiday mode yet. Fines, decay and regression keep running while you're away (billing stops at 7 days).
 - Neglect counters use the course's condition at the time of the bill for every day billed, so a long absence counts in full.

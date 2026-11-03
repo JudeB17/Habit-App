@@ -25,7 +25,7 @@ export const sb = configured
 export const REACTIONS = ['🔥', '👏', '⛳', '😮', '😬'];
 const CACHE = 'fairway.social';
 const EVENT_TTL_MS = 48 * 3600_000;   // queued events older than this are dropped, not posted
-const BACKUP_EVERY_MS = 10 * 60_000;
+const BACKUP_EVERY_MS = 2 * 60_000;
 const POLL_MS = 90_000;
 
 // ---------- state ----------
@@ -158,9 +158,9 @@ let publishing = null;
 const strip = (card) => JSON.stringify({ ...card, at: 0 });
 
 /** Push card, today's feed card, queued events and (throttled) the backup. */
-export function publish(force = false) {
+export function publish(force = false, backupNow = false) {
   if (!sb || !st.user) return Promise.resolve();
-  if (publishing) return publishing.then(() => publish(force));
+  if (publishing) return publishing.then(() => publish(force, backupNow));
   publishing = (async () => {
     const s = getState();
     const uid = st.user.id;
@@ -172,9 +172,11 @@ export function publish(force = false) {
         last.name = name;
       }
 
-      // A new phone that hasn't restored yet would publish an empty course over the real
-      // one, so hold everything back until the backup is restored or something is logged.
-      const holdBack = isFresh(s) && st.backup && st.backup.install !== s.installId;
+      // The cloud backup was made by another install (a reinstall, Safari vs the home screen
+      // app, a second phone). Publishing now would put this phone's course over the real one,
+      // and logging a single habit used to be enough to overwrite the backup. Hold everything
+      // until the backup is restored, or the user says this phone's data is the one to keep.
+      const holdBack = otherInstall(s);
 
       const card = buildCard(s);
       const fp = strip(card);
@@ -208,7 +210,7 @@ export function publish(force = false) {
       }
 
       // A fresh install never overwrites a backup: restore first, or log something.
-      if (!isFresh(s) && (force || !last.backupAt || Date.now() - last.backupAt > BACKUP_EVERY_MS)) {
+      if (!holdBack && (!isFresh(s) || s.settings.claimBackup) && (force || backupNow || !last.backupAt || Date.now() - last.backupAt > BACKUP_EVERY_MS)) {
         const { timer, outbox, ...data } = s;
         check(await sb.from('backups').upsert({ user_id: uid, data: { ...data, savedAt: Date.now() } }));
         last.backupAt = Date.now();
@@ -223,6 +225,19 @@ export function publish(force = false) {
     }
   })();
   return publishing;
+}
+
+/** True when the cloud backup belongs to another install and this phone hasn't claimed it. */
+export function otherInstall(s = getState()) {
+  return !!(st.backup && st.backup.install !== s.installId && !s.settings.claimBackup);
+}
+
+/** Keep this phone's data and replace the cloud backup with it. */
+export async function keepThisPhone() {
+  actions.claimBackup();
+  last = {};
+  await publish(true);
+  await refresh();
 }
 
 export async function restoreBackup() {
@@ -298,7 +313,7 @@ export function startSocial() {
   document.addEventListener('visibilitychange', () => {
     if (!st.user) return;
     if (visible()) refresh();
-    else publish(); // last chance before iOS freezes the page
+    else publish(false, true); // last chance before iOS freezes the page: back up now
   });
   setInterval(() => { if (st.user && visible()) refresh(); }, POLL_MS);
   window.addEventListener('online', () => { if (st.user) publish().then(refresh); });

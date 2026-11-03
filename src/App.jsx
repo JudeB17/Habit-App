@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Today from './screens/Today.jsx';
 import CourseScreen from './screens/CourseScreen.jsx';
 import Stats from './screens/Stats.jsx';
@@ -6,7 +6,8 @@ import Plan from './screens/Plan.jsx';
 import Me from './screens/Me.jsx';
 import Feed from './screens/Feed.jsx';
 import FriendView from './screens/FriendView.jsx';
-import { startSocial, useSocial } from './lib/social.js';
+import { startSocial, useSocial, configured, restoreBackup, ago } from './lib/social.js';
+import { AuthCard } from './screens/Feed.jsx';
 import HabitEditor from './components/HabitEditor.jsx';
 import TimerScreen from './components/TimerScreen.jsx';
 import PomodoroScreen from './components/PomodoroScreen.jsx';
@@ -14,7 +15,7 @@ import { CourseMap, DropIcon } from './components/Course.jsx';
 import { ChestArt, MaterialToken } from './components/Icons.jsx';
 import { CountSheet, BucketSheet, StartTimerSheet } from './components/LogSheets.jsx';
 import { payout, fx } from './components/fx.jsx';
-import { useStore, actions, timerElapsedMs, getState, heartbeat, lastSeen, bus, phaseEnd, balance } from './lib/store.js';
+import { useStore, actions, timerElapsedMs, getState, heartbeat, lastSeen, bus, phaseEnd, balance, recoverLocal } from './lib/store.js';
 import { formatDuration } from './lib/dates.js';
 import { RARITY, money, newCourse, CHESTS, MATERIALS, TIERS } from './lib/game.js';
 import { sfx } from './lib/sound.js';
@@ -76,7 +77,7 @@ export default function App() {
   const [opened, setOpened] = useState(null);
   const [friend, setFriend] = useState(null);
   usePresence();
-  useEffect(() => { startSocial(); }, []);
+  useEffect(() => { startSocial(); recoverLocal().then((ok) => ok && fx.toast('Your course was recovered from this phone\'s backup copy')); }, []);
 
   useEffect(() => {
     const onChest = (e) => { if (!e.detail.reason.startsWith('Goal')) fx.toast(`${CHESTS[e.detail.kind].label} earned: ${e.detail.reason}`); };
@@ -295,7 +296,49 @@ function TimerPill({ onOpen }) {
   );
 }
 
+/** For a phone that's lost its data (reinstalled, or opened in Safari instead of the icon). */
+function RestoreStart({ onBack }) {
+  const so = useSocial();
+  const file = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function fromFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { actions.importData(await f.text()); fx.toast('Backup restored'); } catch (x) { setErr(x.message); }
+  }
+  async function fromCloud() {
+    setBusy(true); setErr('');
+    try { await restoreBackup(); fx.toast('Backup restored'); } catch (x) { setErr(x.message); }
+    setBusy(false);
+  }
+  return (
+    <main className="onboard">
+      <h1>Get your course back</h1>
+      {configured && !so.user && <AuthCard />}
+      {configured && so.user && (
+        so.backup ? (
+          <div className="hint-box restore">
+            <span className="grow"><strong>Cloud backup from {ago(so.backup.updatedAt)}</strong> for {so.user.email}.</span>
+            <button className="btn dark full tall" disabled={busy} onClick={fromCloud}>{busy ? '…' : 'Restore it'}</button>
+          </div>
+        ) : <p className="muted">{so.fetched ? 'No cloud backup on this account yet.' : 'Looking for your backup…'}</p>
+      )}
+      <button className="btn ghost full" onClick={() => file.current?.click()}>Import a backup file instead</button>
+      <input ref={file} type="file" accept="application/json" hidden onChange={fromFile} />
+      {err && <p className="err">{err}</p>}
+      <button className="link center-text" onClick={onBack}>Start a new course instead</button>
+    </main>
+  );
+}
+
 function Onboarding() {
+  const [restore, setRestore] = useState(false);
+  if (restore) return <RestoreStart onBack={() => setRestore(false)} />;
+  return <NewStart onRestore={() => setRestore(true)} />;
+}
+
+function NewStart({ onRestore }) {
   const [name, setName] = useState('');
   const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -317,6 +360,7 @@ function Onboarding() {
         onClick={() => { sfx.check(); actions.setProfile({ name: name.trim(), onboarded: true }); }}
       >Start with 4 example habits</button>
       <p className="muted small center-text">Edit or delete them any time.</p>
+      <button className="btn ghost full" onClick={onRestore}>I already have a course: restore it</button>
     </main>
   );
 }

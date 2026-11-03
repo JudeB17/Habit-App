@@ -97,19 +97,67 @@ function migrate(raw) {
 }
 
 function load() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return migrate(JSON.parse(raw));
-  } catch { /* corrupted or blocked storage: start fresh */ }
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch { /* storage blocked */ }
+  if (raw) {
+    try { return migrate(JSON.parse(raw)); } catch {
+      // Never let a fresh state silently replace data we couldn't read: park it first.
+      try { localStorage.setItem(`${KEY}.broken.${Date.now()}`, raw); } catch { /* full */ }
+    }
+  }
   return initialState();
 }
 
 let state = load();
 const listeners = new Set();
 
+// ---------- second copy in IndexedDB ----------
+// localStorage is the working copy. A mirror in IndexedDB survives the localStorage key being
+// lost or corrupted, and the app asks the browser to treat its storage as persistent.
+const IDB = { db: 'fairway', store: 'kv', key: 'state' };
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') return resolve(null);
+    const open = indexedDB.open(IDB.db, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore(IDB.store);
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction(IDB.store, mode);
+      const req = fn(tx.objectStore(IDB.store));
+      tx.oncomplete = () => { resolve(req?.result ?? null); open.result.close(); };
+      tx.onerror = () => { reject(tx.error); open.result.close(); };
+    };
+  });
+}
+let mirrorTimer = null;
+function mirror() {
+  if (!state.profile.onboarded) return; // never mirror an empty phone over a real copy
+  clearTimeout(mirrorTimer);
+  mirrorTimer = setTimeout(() => {
+    const { timer, ...data } = state;
+    idb('readwrite', (os) => os.put(JSON.stringify({ ...data, timer }), IDB.key)).catch(() => {});
+  }, 800);
+}
+
+/** On start: ask for persistent storage, and if this phone looks empty, recover from the mirror. */
+export async function recoverLocal() {
+  try { await navigator.storage?.persist?.(); } catch { /* not supported */ }
+  if (state.profile.onboarded) { mirror(); return false; }
+  try {
+    const raw = await idb('readonly', (os) => os.get(IDB.key));
+    if (!raw) return false;
+    const saved = migrate(JSON.parse(raw));
+    if (!saved.profile?.onboarded) return false;
+    commit(saved);
+    emit('recovered', {});
+    return true;
+  } catch { return false; }
+}
+
 function commit(next) {
   state = next;
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* quota or private mode */ }
+  mirror();
   listeners.forEach((l) => l());
 }
 
@@ -899,7 +947,12 @@ export const actions = {
     if (!Array.isArray(parsed.habits) || typeof parsed.logs !== 'object') throw new Error('Not a Fairway backup');
     commit({ ...migrate(parsed), outbox: [] });
   },
-  reset() { commit(initialState()); },
+  reset() {
+    idb('readwrite', (os) => os.delete(IDB.key)).catch(() => {});
+    commit(initialState());
+  },
+  /** This phone's data is the real copy: let it publish over a cloud backup from another install. */
+  claimBackup() { commit({ ...state, settings: { ...state.settings, claimBackup: true } }); },
 };
 
 export function timerElapsedMs(t) {

@@ -5,7 +5,7 @@ import { fx } from '../components/fx.jsx';
 import { useStore, isFresh } from '../lib/store.js';
 import {
   configured, useSocial, signIn, signUp, createGroup, joinGroup, refresh, toggleReaction,
-  addComment, deleteComment, restoreBackup, REACTIONS, ago,
+  addComment, deleteComment, restoreBackup, keepThisPhone, otherInstall, REACTIONS, ago,
 } from '../lib/social.js';
 import { friendCourse } from '../lib/card.js';
 import { CATEGORIES, TRUST, RARITY } from '../lib/game.js';
@@ -67,7 +67,7 @@ function Shell({ children, right }) {
 
 // ---------- sign in ----------
 
-function AuthCard() {
+export function AuthCard() {
   const [mode, setMode] = useState('in');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
@@ -160,11 +160,24 @@ function RestoreBanner() {
   const so = useSocial();
   const s = useStore();
   const [busy, setBusy] = useState(false);
-  if (!so.backup || !isFresh(s) || so.backup.install === s.installId) return null;
+  const [confirm, setConfirm] = useState(false);
+  if (!otherInstall(s)) return null;
+  const fresh = isFresh(s);
+  async function run(fn, msg) { setBusy(true); try { await fn(); fx.toast(msg); } catch (e) { fx.toast(e.message); } setBusy(false); }
   return (
     <div className="hint-box restore">
-      <span className="grow">Found a backup from {ago(so.backup.updatedAt)}. Restore it to this phone?</span>
-      <button className="btn dark" disabled={busy} onClick={async () => { setBusy(true); try { await restoreBackup(); fx.toast('Backup restored'); } catch (e) { fx.toast(e.message); } setBusy(false); }}>Restore</button>
+      <span className="grow">
+        <strong>Found your cloud backup from {ago(so.backup.updatedAt)}.</strong>{' '}
+        {fresh ? 'Restore it to this phone?' : 'It was made on another install, so nothing syncs until you pick which one to keep.'}
+      </span>
+      <div className="row gap">
+        <button className="btn dark grow" disabled={busy} onClick={() => run(restoreBackup, 'Backup restored')}>Restore backup</button>
+        {!fresh && (
+          <button className={`btn grow ${confirm ? 'danger' : 'ghost'}`} disabled={busy} onClick={() => (confirm ? run(keepThisPhone, "This phone's data is now the backup") : setConfirm(true))}>
+            {confirm ? 'Tap again: replaces the backup' : "Keep this phone's"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
